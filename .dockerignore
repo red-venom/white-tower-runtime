@@ -1,0 +1,10 @@
+*
+!wot_engine/
+!wot_engine/*.py
+!deployment/
+!deployment/Dockerfile
+!deployment/gunicorn.conf.py
+!mechanics.md
+!weave-catalogue.md
+!curriculum.md
+!lore-and-oaths.md
