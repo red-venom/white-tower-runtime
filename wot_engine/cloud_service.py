@@ -80,11 +80,32 @@ class CloudGame:
             return {'save':result, 'packet':self.controller.public_packet(), 'disposable':True}
 
     def read(self, command='recap', course_id=None):
-        require(command in ('recap','sheet','choices','training','journal','show-roll','known-facts','weaves','pause','course'),
+        require(command in ('recap','sheet','choices','training','journal','show-roll','known-facts','weaves','pause','course','status'),
                 'Unknown player query.')
+        if command == 'status':
+            return self.recovery_status()
         if command == 'course':
             return self.controller.public_course(course_id)
         return query(self.controller, command)
+
+    def recovery_status(self):
+        """Expose retry identifiers for already accepted work, never private actions."""
+        with file_lock(self.path / 'service.lock'):
+            status = self.controller.public_status()
+            with self.controller.store.locked() as db:
+                delivered = {row[0] for row in db.execute("SELECT action_id FROM actions WHERE phase='DELIVERED'")}
+            retries = []
+            for path in sorted(self.offers.glob('*.accepted.json')):
+                action_id = path.name.removesuffix('.accepted.json')
+                if action_id in delivered:
+                    continue
+                action = read_json(path)
+                retries.append({'action_id':action_id,'stakes_hash':action['stakes_hash'],
+                                'goal':action['stakes']['goal'], 'already_accepted':True})
+            return {'campaign_id':self.campaign_id, 'save_status':status,
+                    'accepted_retries':retries,
+                    'guidance':'Resume only an already accepted action using its exact action_id and stakes_hash. '
+                               'Do not create a replacement decision. BLOCKED status requires review.'}
 
     def preview(self, action_id, intent):
         require(type(action_id) is str and IDENTIFIER.fullmatch(action_id), 'Invalid action ID.')
