@@ -1,0 +1,5 @@
+*
+!mobile_game/
+!mobile_game/**
+**/__pycache__/
+**/*.pyc
