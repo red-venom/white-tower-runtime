@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f4efe5">
+  <meta name="color-scheme" content="light">
+  <title>White Tower · Mobile pilot</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+  <script defer src="/assets/app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to the story</a>
+  <header class="site-header">
+    <a class="wordmark" href="/" aria-label="White Tower home">
+      <svg class="tower-mark" viewBox="0 0 32 40" aria-hidden="true"><path d="M6 37h20M9 35l3-26h8l3 26M11 9l5-6 5 6M14 18h4M13 26h6M16 32v5"/></svg>
+      <span>White Tower<span class="wordmark-sub">A story carried with you</span></span>
+    </a>
+    <span class="pilot-badge">Mobile pilot</span>
+  </header>
+
+  <main id="main" class="page-shell" tabindex="-1">
+    <div id="connection-status" class="connection-status" role="status"><span class="status-dot connecting"></span>Connecting to your saved stories…</div>
+    <section id="notice" class="notice" role="status" hidden></section>
+
+    <section id="recovery-card" class="recovery-card" aria-labelledby="recovery-heading" hidden>
+      <div><p class="eyebrow">Keep your place</p><h2 id="recovery-heading">Save your recovery code</h2>
+      <p>This private code opens your stories in another browser or on your phone. Keep it somewhere safe.</p></div>
+      <code id="recovery-code"></code>
+      <div class="button-row"><button id="copy-recovery" class="button button-secondary">Copy code</button><button id="download-recovery" class="button button-secondary">Save code</button><button id="dismiss-recovery" class="text-button">I’ve kept it</button></div>
+    </section>
+
+    <section id="welcome" class="welcome" hidden>
+      <div class="welcome-ornament" aria-hidden="true">✧</div>
+      <p class="eyebrow">Disposable mobile pilot</p>
+      <h1>A small beginning.<br>A place to return to.</h1>
+      <p class="welcome-copy">Play a short, prepared episode in the White Tower. Your choices and progress are saved online, ready when you return.</p>
+      <button id="start-campaign" class="button button-primary">Begin a sample story <span aria-hidden="true">→</span></button>
+      <p class="quiet-copy">Sample characters only. Aveline’s campaign is untouched.</p>
+      <div class="welcome-notes"><div><span aria-hidden="true">01</span><strong>Choose your approach</strong><p>See the stakes before taking a risk.</p></div><div><span aria-hidden="true">02</span><strong>Leave and return</strong><p>Your desktop can stay switched off.</p></div><div><span aria-hidden="true">03</span><strong>Reach an ending</strong><p>A complete scene, with time to breathe.</p></div></div>
+    </section>
+
+    <section id="game" hidden aria-label="Current story">
+      <div class="chapter-heading"><div><p class="eyebrow">Disposable sample · <span id="chapter-status">In progress</span></p><h1 id="story-title"></h1><p id="character-line" class="character-line"></p></div><span class="chapter-ornament" aria-hidden="true">✧</span></div>
+      <div id="resources" class="resources" aria-label="Character resources"></div>
+      <article class="story-card" aria-labelledby="scene-heading">
+        <div class="story-card-heading"><h2 id="scene-heading">Your story</h2><span id="story-time" class="story-time"></span></div>
+        <div id="story" class="story-prose"></div>
+        <div id="last-roll" class="roll-receipt" hidden></div>
+        <div class="save-line"><span class="save-check" aria-hidden="true">✓</span><span id="save-status">Saved</span></div>
+      </article>
+
+      <section id="pending-card" class="pending-card" aria-labelledby="pending-heading" hidden>
+        <p class="eyebrow">Your choice is kept</p><h2 id="pending-heading">Checking your save</h2><p id="pending-description"></p>
+        <button id="retry-action" class="button button-primary">Check and retry safely</button>
+        <p class="quiet-copy">This checks the same choice. It won’t take the action twice.</p>
+      </section>
+
+      <section id="choices-section" class="choices-section" aria-labelledby="choices-heading"><div class="section-heading"><h2 id="choices-heading">What do you do?</h2><span>Choose an approach</span></div><div id="choices" class="choices"></div></section>
+      <section id="ending" class="ending" hidden><span aria-hidden="true">✧</span><h2>This episode is complete.</h2><p>Your choices and ending are saved. You can revisit the journal, keep a copy, or start another disposable sample.</p></section>
+      <details id="journal" class="journal"><summary>Your journal <span id="journal-count"></span></summary><div id="events"></div></details>
+      <div class="story-actions"><button id="export-campaign" class="text-button">Download a save copy <span aria-hidden="true">↗</span></button><button id="refresh-campaign" class="text-button">Refresh saved story</button></div>
+    </section>
+
+    <section id="campaign-library" class="campaign-library" hidden aria-labelledby="library-heading"><div class="section-heading"><h2 id="library-heading">Your sample stories</h2><button id="new-campaign" class="text-button">New sample <span aria-hidden="true">+</span></button></div><div id="campaign-list"></div></section>
+
+    <details id="restore-details" class="restore-details"><summary>Recovery and another browser</summary><form id="restore-form"><label for="restore-code">Your recovery code</label><input id="restore-code" name="recovery_code" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste your saved code" required><button id="restore-button" class="button button-secondary" type="submit">Restore my stories</button><p class="quiet-copy">Use the code from your original browser. Keep it private.</p></form>
+      <div class="replace-recovery"><p class="quiet-copy">Already connected, but haven’t kept your code?</p><button id="new-recovery-code" class="text-button" aria-expanded="false" aria-controls="replace-recovery-confirmation">Create a new recovery code</button><div id="replace-recovery-confirmation" class="replace-recovery-confirmation" hidden><p>The new code will replace your previous one. Your old code will stop working; this browser will stay connected.</p><div class="button-row"><button id="confirm-recovery-code" class="button button-secondary">Replace code</button><button id="cancel-recovery-code" class="text-button">Cancel</button></div></div></div>
+    </details>
+    <footer class="site-footer"><p>A prepared sample episode, with choices and saved progress.<br>Freeform roleplay is not part of this pilot.</p><p>Online connection required · Progress saved in the cloud</p></footer>
+  </main>
+
+  <dialog id="risk-dialog" aria-labelledby="risk-title"><form method="dialog"><p class="eyebrow">Before you choose</p><h2 id="risk-title"></h2><p id="risk-description"></p><div class="stakes-box"><strong>At stake</strong><p id="risk-stakes"></p></div><p class="quiet-copy">This approach includes a roll. The result will be saved with your choice.</p><div class="dialog-actions"><button value="cancel" class="button button-secondary">Go back</button><button id="confirm-risk" value="confirm" class="button button-primary">Take this approach</button></div></form></dialog>
+  <div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>
