@@ -384,8 +384,30 @@ def verify(probe):
     before_recovery, _, _ = fresh.request("GET", campaign_path(main["checkpoint"]),
                                           label="anonymous_read", expected=401)
     require(before_recovery.get("error") == "SESSION_REQUIRED", "fresh_browser_needs_recovery")
+    absent, _, _ = fresh.request("GET", "/api/session", label="anonymous_session_lookup", expected=401)
+    require(absent.get("error") == "SESSION_REQUIRED" and len(fresh.cookies) == 0,
+            "session_lookup_does_not_create_an_owner")
+    invalid, headers, _ = fresh.request("POST", "/api/session/recover", {"recovery_code": None},
+                                         label="anonymous_null_recovery", expected=401)
+    require(invalid.get("error") == "INVALID_RECOVERY" and len(fresh.cookies) == 0
+            and not any(k.lower() == "set-cookie" for k in headers),
+            "null_recovery_does_not_create_an_owner")
+    probe.passed("missing_session_and_null_recovery_do_not_create_owner")
     recovered = fresh.session(probe.state["owner"]["recovery_code"])
     require(recovered.get("recovery_code") is None, "recovery_does_not_create_another_owner")
+    identity, _, _ = fresh.request("GET", "/api/session", label="recovered_identity")
+    require(isinstance(identity.get("player_id"), str) and identity["player_id"] == recovered.get("player_id"),
+            "stable_owner_identity_after_recovery")
+    original_cookies = [(c.name, c.value) for c in fresh.cookies]
+    invalid, headers, _ = fresh.request("POST", "/api/session/recover", {"recovery_code": None},
+                                         label="authenticated_null_recovery", expected=401)
+    require(invalid.get("error") == "INVALID_RECOVERY"
+            and [(c.name, c.value) for c in fresh.cookies] == original_cookies
+            and not any(k.lower() == "set-cookie" for k in headers),
+            "null_recovery_does_not_replace_existing_session")
+    retained, _, _ = fresh.request("GET", "/api/session", label="retained_identity")
+    require(retained == identity, "rejected_recovery_preserves_original_owner")
+    probe.passed("null_recovery_preserves_existing_session_and_owner")
     probe.passed("fresh_cookie_jar_recovery_after_external_restart")
     listed, _, _ = fresh.request("GET", "/api/campaigns", label="list")
     expected_ids = {main["checkpoint"]["id"], probe.state["concurrent"]["checkpoint"]["id"]}

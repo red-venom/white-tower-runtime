@@ -128,6 +128,44 @@ def test_http_lost_reply_retry_and_new_browser_recovery(app):
     assert invalid.status_code == 401
 
 
+@pytest.mark.parametrize("bad", [None, False, 0, [], {}, ""])
+def test_invalid_recovery_never_creates_or_replaces_an_owner(app, bad):
+    client = app.test_client()
+    credentials = client.post("/api/session", json={}).get_json()
+    old_cookie = client.get_cookie(COOKIE).value
+    for browser in (client, app.test_client()):
+        response = browser.post("/api/session/recover", json={"recovery_code": bad})
+        assert response.status_code == 401
+        assert response.get_json()["error"] == "INVALID_RECOVERY"
+        assert "Set-Cookie" not in response.headers
+    assert client.get_cookie(COOKIE).value == old_cookie
+    assert client.get("/api/session").get_json()["player_id"] == credentials["player_id"]
+    with app.extensions["store"].connect() as db:
+        assert db.execute("SELECT count(*) AS n FROM mobile_players").fetchone()["n"] == 1
+        assert db.execute("SELECT count(*) AS n FROM mobile_sessions").fetchone()["n"] == 1
+
+
+def test_session_lookup_is_read_only_and_owner_identity_survives_recovery(app):
+    client = app.test_client()
+    assert client.get("/api/session").status_code == 401
+    with app.extensions["store"].connect() as db:
+        assert db.execute("SELECT count(*) AS n FROM mobile_players").fetchone()["n"] == 0
+        assert db.execute("SELECT count(*) AS n FROM mobile_sessions").fetchone()["n"] == 0
+    credentials = client.post("/api/session", json={}).get_json()
+    owner = credentials["player_id"]
+    assert str(uuid.UUID(owner)) == owner
+    response = client.get("/api/session")
+    assert response.status_code == 200 and "Set-Cookie" not in response.headers
+    assert response.get_json() == {"player_id": owner, "csrf_token": credentials["csrf_token"], "recovery_code": None}
+    assert client.post("/api/session", json={}).get_json()["player_id"] == owner
+    other = app.test_client().post("/api/session", json={}).get_json()
+    assert other["player_id"] != owner
+    fresh = app.test_client()
+    recovered = fresh.post("/api/session/recover", json={"recovery_code": credentials["recovery_code"]})
+    assert recovered.get_json()["player_id"] == owner
+    assert fresh.get("/api/session").get_json()["player_id"] == owner
+
+
 def test_http_stale_and_changed_request_are_explicit_conflicts(app):
     client = app.test_client()
     packet, headers, _ = start(client)
@@ -178,6 +216,7 @@ def test_session_cookie_and_responses_have_private_browser_headers(app):
     health = client.get("/health")
     assert health.status_code == 200 and health.get_json()["database"] == "postgresql"
     assert health.get_json()["live_import"] is False
+    assert health.get_json()["release"] == "mobile-disposable-pilot-v2"
 
 
 def test_production_uses_secure_cookie_and_hsts(app, monkeypatch):
@@ -246,7 +285,8 @@ def test_valid_bootstrap_reload_bypasses_exhausted_anonymous_ip_limit(app):
     for _ in range(125):
         response = client.post("/api/session", json={})
         assert response.status_code == 200
-        assert response.get_json() == {"csrf_token": credentials["csrf_token"], "recovery_code": None}
+        assert response.get_json() == {"csrf_token": credentials["csrf_token"], "recovery_code": None,
+                                       "player_id": credentials["player_id"]}
     assert client.get_cookie(COOKIE).value == original_cookie
     assert client.get("/api/campaigns/" + packet["id"]).get_json() == packet
     with store.connect() as db:

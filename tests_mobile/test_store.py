@@ -90,7 +90,6 @@ def test_session_credentials_are_hashed_and_invalid_recovery_creates_nothing(sto
     for bad in ("incorrect", "x" * 43, None, "x" * 129):
         if bad is None:
             assert store.session(bad) is None
-            continue
         with pytest.raises(Problem) as error:
             store.new_session(bad)
         assert error.value.status == 401

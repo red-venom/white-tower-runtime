@@ -4,6 +4,7 @@
   const $ = (id) => document.getElementById(id);
   const STORAGE = { selected: "white-tower-mobile:selected:v1", pending: "white-tower-mobile:pending:v1" };
   let csrfToken = null;
+  let playerId = null;
   let current = null;
   let campaigns = [];
   let busy = false;
@@ -75,7 +76,8 @@
     $("restore-button").disabled = value;
     $("new-recovery-code").disabled = value || !!pending || !csrfToken;
     $("confirm-recovery-code").disabled = value || !!pending || !csrfToken;
-    document.querySelectorAll(".choice, .campaign-item").forEach(button => { button.disabled = value || !!pending; });
+    document.querySelectorAll(".choice").forEach(button => { button.disabled = value || !!pending; });
+    document.querySelectorAll(".campaign-item").forEach(button => { button.disabled = value; });
     $("retry-action").disabled = value || !navigator.onLine;
     $("retry-action").textContent = value ? "Checking your save…" : "Check and retry safely";
     $("restore-details").hidden = false;
@@ -181,7 +183,7 @@
     const root = $("campaign-list"); root.replaceChildren();
     $("campaign-library").hidden = !campaigns.length;
     campaigns.forEach(campaign => {
-      const button = document.createElement("button"); button.type = "button"; button.className = "campaign-item"; button.disabled = busy || !!pending;
+      const button = document.createElement("button"); button.type = "button"; button.className = "campaign-item"; button.disabled = busy;
       const copy = document.createElement("span"); const title = document.createElement("span"); title.className = "campaign-item-title"; title.textContent = campaign.name || "Sample story";
       const meta = document.createElement("span"); meta.className = "campaign-item-meta"; meta.textContent = `Saved turn ${campaign.revision ?? 0}`;
       copy.append(title, meta); const status = document.createElement("span"); status.className = "campaign-item-current"; status.textContent = current?.id === campaign.id ? "Open" : "Continue →";
@@ -199,9 +201,12 @@
   }
 
   async function loadCampaign(id) {
-    if (busy || pending) return;
+    if (busy) return;
     setBusy(true); clearNotice();
-    try { renderCampaign(await api(`/api/campaigns/${encodeURIComponent(id)}`)); }
+    try {
+      renderCampaign(await api(`/api/campaigns/${encodeURIComponent(id)}`));
+      if (pending) notice("You can inspect this saved story. Your pending request is still kept; no new action is available until its original connection and result are confirmed.");
+    }
     catch (error) { notice(error.status === 404 ? "That story isn’t available in this connection. Restore your original recovery code to open it." : error.message, true, () => loadCampaign(id)); }
     finally { setBusy(false); }
   }
@@ -213,10 +218,25 @@
     pending = item; return true;
   }
   function clearPending() { pending = null; persist(STORAGE.pending, null); }
+  function adoptSession(session) {
+    if (typeof session.player_id !== "string" || !session.player_id || !session.csrf_token) {
+      throw new ApiError("The private connection could not be established.", 0);
+    }
+    csrfToken = session.csrf_token; playerId = session.player_id;
+  }
+  function requirePendingOwner() {
+    if (pending && (!pending.player_id || pending.player_id !== playerId)) {
+      $("restore-details").open = true;
+      throw new ApiError(pending.player_id
+        ? "This saved request belongs to another connection. Recover the original account before retrying it."
+        : "This older saved request has no verified owner and will not replay automatically. Recover the original connection, inspect its saved stories below, and ask for help reconciling the retained request.", 403);
+    }
+  }
   async function createCampaign() {
     if (busy || pending) return;
     if (!navigator.onLine) { notice("Reconnect to the internet before starting a story.", true); return; }
-    if (keepPending({ kind: "create", request: { request_id: uuid() }, created_at: new Date().toISOString() })) await sendPending();
+    if (!playerId) { notice("Reconnect before starting a story.", true, initialize); return; }
+    if (keepPending({ kind: "create", player_id: playerId, request: { request_id: uuid() }, created_at: new Date().toISOString() })) await sendPending();
   }
   function choose(choice) {
     if (busy || pending || !current) return;
@@ -227,7 +247,8 @@
   }
   async function submitChoice(choice) {
     if (busy || pending || !current) return;
-    const item = { kind: "action", campaign_id: current.id, label: choice.label, request: { action_id: uuid(), expected_revision: current.revision, choice_id: choice.id, choice_hash: choice.choice_hash }, created_at: new Date().toISOString() };
+    if (!playerId) { notice("Reconnect before choosing an action.", true, initialize); return; }
+    const item = { kind: "action", player_id: playerId, campaign_id: current.id, label: choice.label, request: { action_id: uuid(), expected_revision: current.revision, choice_id: choice.id, choice_hash: choice.choice_hash }, created_at: new Date().toISOString() };
     if (keepPending(item)) await sendPending();
   }
   async function sendPending() {
@@ -236,6 +257,10 @@
     const request = pending;
     setBusy(true); clearNotice(); connection("Checking your saved choice…", "connecting");
     try {
+      // Recheck the cookie's current owner, including changes in another tab.
+      // GET never creates an identity when a cookie has expired or disappeared.
+      adoptSession(await api("/api/session"));
+      requirePendingOwner();
       const path = request.kind === "create" ? "/api/campaigns" : `/api/campaigns/${encodeURIComponent(request.campaign_id)}/actions`;
       const result = await api(path, { method: "POST", body: request.request });
       const candidate = result.campaign || result;
@@ -259,7 +284,7 @@
         }
         notice(error.status === 409 ? `This story changed in another window or the available choice was updated. Your new choice was not applied. ${refreshed ? "The latest saved story is shown; choose again from here." : "Refresh the saved story before choosing again."}` : `That choice wasn’t available, so the story did not advance. ${refreshed ? "Review the saved story and choose again." : "Refresh the saved story before choosing again."}`, false);
       } else {
-        if (error.status === 401 || error.status === 403) csrfToken = null;
+        if (error.status === 401 || error.status === 403) { csrfToken = null; playerId = null; $("restore-details").open = true; }
         if (error.status === 404) {
           $("restore-details").open = true;
           notice("This browser no longer has access to that story. Enter your original recovery code below, then we’ll check the choice you already made. The original choice is still kept.", true);
@@ -319,13 +344,17 @@
     if (busy) return;
     setBusy(true); clearNotice(); connection("Connecting to your saved stories…", "connecting");
     try {
-      const session = await api("/api/session", { method: "POST", body: {} }); csrfToken = session.csrf_token;
-      if (!csrfToken) throw new Error("The private connection could not be established.");
+      const session = await api("/api/session", pending ? {} : { method: "POST", body: {} });
+      adoptSession(session);
       showRecovery(session.recovery_code);
       await loadLibrary();
+      requirePendingOwner();
       connection("Connected · your progress is saved online");
       if (!storageAvailable) notice("Saved site data is disabled in this browser. Enable it before playing so interrupted saves can be recovered.", true);
-    } catch (error) { connection("Could not connect · your saved stories are unchanged", "offline"); notice(error.message || "Could not connect to your saved stories.", true, initialize); }
+    } catch (error) {
+      if (error.status === 401 || error.status === 403) { csrfToken = null; playerId = null; if (pending) $("restore-details").open = true; }
+      connection("Could not connect · your saved stories are unchanged", "offline"); notice(error.message || "Could not connect to your saved stories.", true, initialize);
+    }
     finally { setBusy(false); }
     if (csrfToken && pending) await sendPending();
   }
@@ -335,13 +364,17 @@
     setBusy(true); clearNotice(); let restored = false;
     try {
       const session = await api("/api/session/recover", { method: "POST", body: { recovery_code: code } });
-      if (!session.csrf_token) throw new Error("The connection couldn’t be restored.");
-      csrfToken = session.csrf_token; $("restore-code").value = ""; $("restore-details").open = false;
+      adoptSession(session);
+      $("restore-code").value = ""; $("restore-details").open = false;
       $("recovery-card").hidden = true; recoveryCode = null;
       showRecovery(session.recovery_code); persist(STORAGE.selected, null); current = null; await loadLibrary();
+      requirePendingOwner();
       restored = true;
       connection("Connected · your saved stories are restored"); toast("Your stories are restored.");
-    } catch (error) { notice(error.status === 401 || error.status === 404 ? "That recovery code wasn’t recognised. Check the complete code from your original browser." : error.message, true); }
+    } catch (error) {
+      if (error.status === 401 || error.status === 403) { csrfToken = null; playerId = null; }
+      notice(error.status === 401 || error.status === 404 ? "That recovery code wasn’t recognised. Check the complete code from your original browser." : error.message, true);
+    }
     finally { setBusy(false); }
     if (restored && pending) await sendPending();
   }

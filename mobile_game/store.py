@@ -12,6 +12,8 @@ from psycopg.types.json import Jsonb
 
 from . import rules
 
+_NEW_SESSION = object()
+
 
 def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode()
@@ -114,11 +116,11 @@ class Store:
             return db.execute("SELECT player_id, csrf_token FROM mobile_sessions WHERE token_hash=%s AND expires_at>now()",
                               (secret_hash(token),)).fetchone()
 
-    def new_session(self, recovery_code=None):
+    def new_session(self, recovery_code=_NEW_SESSION):
         token, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
         returned_code = None
         with self.connect() as db:
-            if recovery_code is None:
+            if recovery_code is _NEW_SESSION:
                 player = str(uuid.uuid4())
                 returned_code = secrets.token_urlsafe(32)
                 db.execute("INSERT INTO mobile_players(id,recovery_hash) VALUES(%s,%s)",
@@ -133,7 +135,7 @@ class Store:
                 player = str(row["id"])
             db.execute("INSERT INTO mobile_sessions(token_hash,player_id,csrf_token) VALUES(%s,%s,%s)",
                        (secret_hash(token), player, csrf))
-        return {"token": token, "csrf_token": csrf, "recovery_code": returned_code}
+        return {"token": token, "csrf_token": csrf, "recovery_code": returned_code, "player_id": player}
 
     def rotate_recovery(self, player):
         code = secrets.token_urlsafe(32)

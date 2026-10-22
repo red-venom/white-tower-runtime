@@ -22,7 +22,10 @@ Do not expose PostgreSQL publicly to serve the game.
 ## Save semantics
 
 The browser retains the exact action ID, expected revision, choice ID and hash
-of the displayed stakes before submitting it. PostgreSQL locks the owned
+of the displayed stakes, bound to its original player identity, before submitting
+it. A read-only session check prevents pending requests from being replayed under
+a replacement account after cookie loss. Invalid recovery input creates no owner.
+PostgreSQL locks the owned
 campaign, detects identical retries, rejects altered retries and stale choices,
 and commits the immutable event and updated checkpoint in one transaction.
 Only committed results produce a saved receipt. Lost replies can retry the same
@@ -49,12 +52,63 @@ Set `TEST_DATABASE_URL` to a dedicated database named `mobile_pilot_test`, then:
 python -m pytest tests_mobile -q
 ```
 
+Keep Node available to include the shipped browser-script retry regressions.
+
 Integration tests deliberately clear only the dedicated test database. Use a
 different database for browser preview. Tests cover dice bands, scene completion,
 state preservation, immutable retry results, changed-input rejection, concurrent
 writers, transaction rollback, recovery codes, ownership and CSRF protection.
 
+### Disposable backup rehearsal
+
+`tests_mobile/backup_probe.py` exercises real `pg_dump`/`pg_restore` against two
+new local databases. From `mobile-runtime`, with its Python dependencies and
+compatible PostgreSQL utilities on `PATH`, run:
+
+```sh
+mkdir -p ../.runtime
+chmod 700 ../.runtime
+PYTHONPATH=. python tests_mobile/backup_probe.py \
+  --source-database mobile_pilot_backup_source \
+  --restore-database mobile_pilot_backup_restore \
+  --host 127.0.0.1 --port 55432 --user mobile_test \
+  --backup-file ../.runtime/mobile-pilot-backup.dump
+```
+
+Start a dedicated local PostgreSQL cluster first; the role must be allowed to
+create databases. The probe refuses non-loopback hosts, different database
+names, existing databases, and existing backup files. It does not start or stop
+PostgreSQL or delete test artifacts. Use a fresh disposable cluster for each CI
+run, invoke this command explicitly, and stop/remove that cluster afterward.
+It is not collected by the ordinary pytest run. `--report-file` optionally saves
+the redacted result to a new file; failures exit nonzero without printing SQL,
+subprocess error text, credentials, or campaign content.
+
+The rehearsal checks all mobile table rows and schema, full checkpoint/event
+continuity, unknown state fields, sessions, recovery, private dice seeds and
+exact action retries. The backup is created with mode 600 under `.runtime`;
+keep it private and never publish it as a CI artifact. It contains security and
+gameplay state that the player-facing JSON export deliberately omits.
+
+This proves local logical backup/restore capability. **Hosted scheduled backups
+remain unverified.** It does not establish Railway backup scheduling, retention,
+off-site storage, encryption, database roles/grants, point-in-time recovery, or
+a restore from an actual hosted backup. Those need separate verification before
+moving a real campaign. The utility intentionally restores without ownership or
+ACL changes into the isolated local database.
+
 ## Migration gate
+
+`mobile_game.migration` can validate and preserve a local manual-v2 checkpoint,
+its committed head, and a separate private GM page in a checksummed offline
+capsule. It checks structural consistency and retains all source fields without
+converting them to the sample's different schema. Synthetic tests cover mismatch
+rejection, exact round trips and private-data exclusion from its redacted report.
+
+A capsule is explicitly `STAGED_NOT_PLAYABLE`. It is a private archive containing
+GM material, not a phone save or player-facing download. It does not establish
+source freshness, authenticity, complete historical-journal coverage or correct
+adjudication. No HTTP import route or database activation is provided.
 
 No Aveline or other live campaign import endpoint exists. Before adding one:
 

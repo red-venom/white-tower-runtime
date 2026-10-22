@@ -41,7 +41,7 @@ def create_app(database_url=None, testing=False):
         identity = store.session(request.cookies.get(COOKIE))
         g.identity = identity
         if request.path in ("/api/session", "/api/session/recover"):
-            if request.path == "/api/session" and identity:
+            if request.path == "/api/session" and (identity or request.method in ("GET", "HEAD")):
                 return
             # No credential is needed to create an empty disposable session.
             address = request.headers.get("X-Railway-Client-IP", request.remote_addr or "unknown") if production else request.remote_addr or "test"
@@ -91,15 +91,25 @@ def create_app(database_url=None, testing=False):
         return value
 
     def session_reply(value):
-        response = jsonify(csrf_token=value["csrf_token"], recovery_code=value["recovery_code"])
+        response = jsonify(csrf_token=value["csrf_token"], recovery_code=value["recovery_code"],
+                           player_id=value["player_id"])
         response.set_cookie(COOKIE, value["token"], max_age=30 * 86400, secure=production, httponly=True, samesite="Strict", path="/")
         return response
+
+    @app.get("/api/session")
+    def current_session():
+        # A pending request must inspect identity without silently signing up.
+        if not g.identity:
+            raise Problem(401, "SESSION_REQUIRED", "Recover your original connection before retrying the saved request.")
+        return jsonify(csrf_token=g.identity["csrf_token"], recovery_code=None,
+                       player_id=str(g.identity["player_id"]))
 
     @app.post("/api/session")
     def session():
         body(set())
         if g.identity:
-            return jsonify(csrf_token=g.identity["csrf_token"], recovery_code=None)
+            return jsonify(csrf_token=g.identity["csrf_token"], recovery_code=None,
+                           player_id=str(g.identity["player_id"]))
         return session_reply(store.new_session())
 
     @app.post("/api/session/recover")
@@ -140,7 +150,7 @@ def create_app(database_url=None, testing=False):
     @app.get("/health")
     def health():
         store.health()
-        return jsonify(status="ready", database="postgresql", release="mobile-disposable-pilot-v1", live_import=False)
+        return jsonify(status="ready", database="postgresql", release="mobile-disposable-pilot-v2", live_import=False)
 
     @app.get("/")
     def index():
