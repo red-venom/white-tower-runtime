@@ -514,3 +514,26 @@ def test_personal_notes_owner_csrf_and_input_boundaries(app):
     for version,content in [(True,'x'),(-1,'x'),(0,'x'*10001),(0,'bad\x00text'),(0,['x'])]:
         assert client.post(url,json={'expected_version':version,'text':content},headers=headers).status_code==422
     assert client.post(url,json={'expected_version':0,'text':'x'*10000},headers=headers).status_code==200
+
+
+def test_connected_chapter_keeps_campaign_notes_history_and_recovery(app):
+    client=app.test_client();_,headers,cred=start(client)
+    packet=client.post('/api/campaigns',json={'request_id':str(uuid.uuid4()),'episode_id':'gallery-letter-v1'},headers=headers).get_json()
+    base=f'/api/campaigns/{packet["id"]}'
+    client.post(base+'/notes',json={'expected_version':0,'text':'Carry this plan forward.'},headers=headers)
+    for choice in ('decline_letter','next_chapter','garden_listen','garden_welcome','garden_finish'):
+        request=action(packet,choice)
+        response=client.post(base+'/actions',json=request,headers=headers)
+        assert response.status_code==200
+        packet=response.get_json()
+        assert client.post(base+'/actions',json=request,headers=headers).get_json()=={**packet,'replayed':True}
+    saved=client.get(base).get_json()
+    assert saved['revision']==5 and saved['state']['completed']
+    assert len(saved['companion']['chapters'])==2
+    assert all(c['completed'] for c in saved['companion']['chapters'])
+    fresh=app.test_client();fresh.post('/api/session/recover',json={'recovery_code':cred['recovery_code']})
+    assert fresh.get(base).get_json()==saved
+    assert fresh.get(base+'/notes').get_json()['text']=='Carry this plan forward.'
+    exported=fresh.get(base+'/export').get_json()
+    assert len(exported['events'])==5 and exported['state']['world']['episode']['result']=='declined'
+    assert exported['sha256']==digest({k:v for k,v in exported.items() if k!='sha256'})

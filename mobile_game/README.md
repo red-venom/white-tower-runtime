@@ -5,6 +5,33 @@ hosted web service and PostgreSQL. A player's desktop is not a runtime component
 It implements a small supported subset of `notion-manual-v2`; it is not a full
 freeform GM, a live-campaign importer, or the older `rules-v2` Python engine.
 
+## Connected chapters: highest-leverage development pass
+
+Assessment: cloud persistence, recovery and an authored first episode are working.
+The largest playable gap was a completed episode leading only to repeated downtime
+or a new character. A freeform GM remains blocked on funded live evaluation;
+more notebook or visual polish would not address this continuity gap.
+
+The selected improvement is **connected play with the same character**. After the
+gallery chapter finishes (including refusal), `Continue with the same character`
+opens **A Seat in the Garden**, an original social chapter with four distinct
+approaches. The transition explicitly advances to the next free afternoon; it
+never grants training or recovery, silently releases channeling, or reopens the
+completed search. Active channeling must be released before skipping ahead.
+
+The same campaign ID, character, resources, learning, NPC memories, personal notes,
+immutable event history and original dice are retained. The gallery's stored
+result remains complete. The notebook lists both chapters and the library shows
+the current scene. The new chapter supports listening through an entire exchange,
+privacy, welcoming another novice, one-to-one company and a respected refusal.
+No social roll is required and no PC dialogue or future promise is invented.
+
+Evaluation covers all routes, both with and without hearing the initial exchange,
+no repeated conversation prompt, actual closure, clock boundaries, active-working
+protection, state preservation, duplicate requests, ownership and fresh-browser
+recovery. This is still a finite authored sample, not unrestricted roleplay or
+proof of a satisfying long campaign. Live Aveline migration remains disabled.
+
 ## Personal notebook
 
 Each campaign has an owner-only notebook saved separately from game state.

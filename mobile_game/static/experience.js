@@ -28,11 +28,11 @@
     }
     $("draft-status").textContent=$("intent-text").value?"Your unfinished message is kept on this device.":"Questions leave the story unchanged.";
     $("intent-section").hidden=!packet.capabilities?.typed_intents;
-    $("intent-text").placeholder=packet.state.completed?"Ask about your progress, study, practise Spark, or enjoy a quiet interval…":"Look around, ask Lysa what happened, or describe an available approach…";
+    $("intent-text").placeholder=packet.state.chapter?.number===2?"Hear them out, invite Nera, choose time alone, or ask about the scene…":packet.state.completed?"Ask about your progress, study, practise Spark, or enjoy a quiet interval…":"Look around, ask Lysa what happened, or describe an available approach…";
     const c=packet.companion;$("companion").hidden=!c;$("return-card").hidden=!c;
     if(c){
       $("return-location").textContent=`${c.location} · saved turn ${packet.revision}`;
-      $("return-objective").textContent=packet.state.completed?"The optional task is complete. Further conversation and practice are yours to choose.":c.objective;
+      $("return-objective").textContent=c.objective;
       $("return-recap").replaceChildren();c.recap.split("\n\n").forEach(p=>paragraph($("return-recap"),p));
       const sheet=$("character-sheet");sheet.replaceChildren();
       paragraph(sheet,`${packet.state.character.name} · ${c.sheet.rank} · level ${c.sheet.level}`);
@@ -43,11 +43,12 @@
       list(sheet,Object.entries(c.sheet.skills).filter(([,v])=>v>0).map(([k,v])=>`${k}: ${v}`));
       const inventory=document.createElement("details");inventory.append(text("summary","Your belongings"));list(inventory,c.sheet.inventory);sheet.append(inventory);
       c.sheet.weaves.forEach(w=>{const card=document.createElement("article");card.className="weave-card";card.append(text("h3",w.name));paragraph(card,w.effect);paragraph(card,`Load ${w.load} · ${w.range_paces} paces · ${w.duration} · Control ${w.control}`);sheet.append(card);});
-      const people=$("people-sheet");people.replaceChildren();c.people.forEach(p=>{people.append(text("h3",`${p.name} · ${p.role}`));paragraph(people,p.present?"Here in the gallery.":"Not currently in the gallery.");paragraph(people,p.known);list(people,p.memories.length?p.memories:["No shared events recorded yet."]);});
+      const people=$("people-sheet");people.replaceChildren();c.people.forEach(p=>{people.append(text("h3",`${p.name} · ${p.role}`));paragraph(people,p.present?"Present in this scene.":"Not currently here.");paragraph(people,p.known);list(people,p.memories.length?p.memories:["No shared events recorded yet."]);});
       const learning=$("learning-sheet");learning.replaceChildren();list(learning,c.evidence.length?c.evidence:["Your evidence will appear here as it is earned."]);list(learning,c.facts);
       Object.values(c.study).forEach(s=>paragraph(learning,`${s.minutes} minutes · ${s.kind} · ${s.status}`));
       if(c.last_cast)paragraph(learning,`Last practice: ${c.last_cast.weave_id} · ${c.last_cast.strain_paid} Strain · released after use · no roll.`);
       $("lore-sheet").replaceChildren();list($("lore-sheet"),c.lore_notes);
+      $("chapter-sheet").replaceChildren();list($("chapter-sheet"),(c.chapters||[]).map(ch=>`${ch.title} · ${ch.completed?"complete":"in progress"}`));
     }
     if(previous!==packet.id){journalVersion++;$("journal-results").replaceChildren();$("journal-results").hidden=true;$("events").hidden=false;$("journal-more").hidden=true;$("journal-search-status").textContent="";}
   }

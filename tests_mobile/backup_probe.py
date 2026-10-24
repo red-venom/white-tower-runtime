@@ -221,6 +221,8 @@ def run(args, report):
     # A second pre-existing session demonstrates all session rows survive.
     second_session = source.new_session(credentials["recovery_code"])
     source.notes(owner, adventure_packet["id"], (0, "Disposable notebook: remember the completed lesson."))
+    for choice in ("next_chapter", "garden_listen", "garden_welcome", "garden_finish"):
+        adventure_packet = source.act(owner, adventure_packet["id"], request_for(adventure_packet, choice))
     source_snapshot = snapshot(source, SOURCE_DB)
     require(all(source_snapshot[table] for table in TABLES), "all_mobile_tables_populated")
     report["checks_passed"].append("full_disposable_fixture_with_private_seed_and_sessions")

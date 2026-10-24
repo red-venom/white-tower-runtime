@@ -174,7 +174,7 @@ class Store:
 
     def campaigns(self, player):
         with self.connect() as db:
-            rows = db.execute("SELECT id,name,revision,updated_at FROM mobile_campaigns WHERE player_id=%s ORDER BY updated_at DESC LIMIT 20",
+            rows = db.execute("SELECT id,name,revision,updated_at,state->'world'->>'scene' AS chapter FROM mobile_campaigns WHERE player_id=%s ORDER BY updated_at DESC LIMIT 20",
                               (player,)).fetchall()
         return [{**r, "id": str(r["id"]), "updated_at": r["updated_at"].isoformat()} for r in rows]
 

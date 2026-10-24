@@ -7,6 +7,7 @@ from copy import deepcopy
 import re
 
 from .channeling import WEAVES, safe_cast
+from . import garden
 
 EPISODE_ID = "gallery-letter-v1"
 TITLE = "The Letter in the Gallery"
@@ -49,6 +50,8 @@ def validate(state):
                               (state["clock"]["day_activity_seconds"], 0, 28800)):
         if not _integer(value, low, high):
             raise ValueError("Invalid saved character or clock.")
+    if garden.active(state):
+        garden.validate(state)
     if e["theory_minutes"] not in (0, 20):
         raise ValueError("Invalid lesson progress.")
 
@@ -67,6 +70,8 @@ def _can_cast(state, id):
 
 def choices(state):
     validate(state)
+    if garden.active(state):
+        return garden.choices(state)
     e, out = state["world"]["episode"], []
     if e["stage"] == "arrival":
         if not e["asked"]:
@@ -100,6 +105,8 @@ def choices(state):
     # A full activity day does not prevent free actions or recovery.
     if clock["day_activity_seconds"] >= 28800:
         out = [c for c in out if c["id"] in ("rest_break", "quiet_interval", "release_source", "decline_letter")]
+    if garden.can_start(state):
+        out.insert(0, garden.start_choice(state))
     return out
 
 
@@ -119,7 +126,7 @@ def view(state):
     if state["clock"]["fictional_seconds"] >= e.get("lesson_ends_at", 39600):
         story = ("The gallery's teaching interval has ended. Maerin Sedai has gone to her next duty; further supervised casting is unavailable here. "
                  + ("The optional task remains complete. Your quiet interval carries no new obligation." if e["completed"] else "The porter and curtain hook remain available for the unfinished search."))
-    return {"title": TITLE, "episode_id": EPISODE_ID, "rules_edition": "notion-manual-v2", "disposable": True,
+    public = {"title": TITLE, "episode_id": EPISODE_ID, "rules_edition": "notion-manual-v2", "disposable": True,
             "character": {k: state["identity"][k] for k in ("name", "age")} | {"rank": state["rank"]},
             "location": state["world"]["location"], "story": story, "objective": e["objective"],
             "choices": choices(state), "status": "complete" if e["completed"] else "in_progress",
@@ -127,6 +134,9 @@ def view(state):
             "resources": {k: state["resources"][k] for k in ("vitality", "max_vitality", "wounds", "strain", "supply", "silver")},
             "fictional_seconds": state["clock"]["fictional_seconds"],
             "sample_notice": "Original disposable adventure; supported typed intentions and authored dialogue. No live campaign or general AI GM is loaded."}
+    if garden.active(state):
+        public.update(garden.view(state))
+    return public
 
 
 def _remember(state, who, fact):
@@ -144,6 +154,10 @@ def resolve(state, choice_id, dice=None):
             raise ValueError("Use exactly two d10 results.")
     elif dice not in (None, []):
         raise ValueError("Routine actions do not require dice.")
+    if choice_id == "next_chapter":
+        return garden.start(state)
+    if garden.active(state):
+        return garden.resolve(state, choice_id, dice)
     next_state = deepcopy(state)
     e = next_state["world"]["episode"]
     seconds, roll, recovered = 0, None, False
@@ -237,10 +251,13 @@ def resolve(state, choice_id, dice=None):
 def companion(state):
     """Player-only reference; never send the whole save or hidden GM material."""
     e, c = state["world"]["episode"], state["channeling"]
-    return {"recap": view(state)["story"], "location": state["world"]["location"],
-            "objective": e["objective"], "evidence": list(e["evidence"]),
+    public = view(state)
+    is_garden = garden.active(state)
+    return {"recap": public["story"], "location": state["world"]["location"],
+            "objective": public["objective"], "evidence": list(e["evidence"]),
+            "chapters": [{"title": TITLE, "completed": e["completed"], "result": e["result"]}] + ([{"title": garden.TITLE, "completed": public["completed"], "result": public["result"]}] if is_garden else []),
             "people": [{**{k: deepcopy(n[k]) for k in ("name", "role", "known", "memories")},
-                        "present": state["clock"]["fictional_seconds"] < e.get("lesson_ends_at", 39600)} for n in state["world"]["npcs"]],
+                        "present": (n["id"] in ("lysa", "nera") and state["clock"]["fictional_seconds"] < e[garden.KEY]["ends_at"]) if is_garden else state["clock"]["fictional_seconds"] < e.get("lesson_ends_at", 39600)} for n in state["world"]["npcs"]],
             "facts": list(state["world"]["known_facts"]),
             "sheet": {"rank": state["rank"], "level": state["level"], "attributes": deepcopy(state["attributes"]),
                       "skills": deepcopy(state["skills"]), "inventory": list(state["resources"]["inventory"]),
@@ -250,7 +267,7 @@ def companion(state):
             "study": deepcopy(state["progression"]["study"]), "last_cast": deepcopy(e["last_cast"]),
             "lore_notes": ["Original scene and supporting cast; no historical event is implied.",
                            "The weave measurements and advancement procedures are manual-v2 house rules.",
-                           "Learning a weave and having permission to practise it are separate. Maerin Sedai is present here."]}
+                           "Learning a weave and having permission to practise it are separate. " + ("No supervised practice is available in this free interval." if is_garden or state["clock"]["fictional_seconds"] >= e.get("lesson_ends_at",39600) else "Maerin Sedai is present here.")]}
 
 
 def interpret(state, prompt):
@@ -262,6 +279,8 @@ def interpret(state, prompt):
     available = {c["id"]: c for c in choices(state)}
     def answer(message, kind="answer", choice=None):
         return {"kind": kind, "message": message, "choice_id": choice}
+    if garden.active(state):
+        return garden.interpret(state, text)
     if re.search(r"\b(ignore|system prompt|api key|developer|reveal secrets)\b", text):
         return answer("I can describe what your character knows or help with the available approaches. Private notes and instructions do not form part of play.")
     if re.search(r"\b(heal|healing|balefire|attack|burn|kill|steal|read her|open the letter|open her|shield|teleport|gateway)\b", text):
@@ -270,7 +289,7 @@ def interpret(state, prompt):
         if re.search(r"\b(strain|capacity|air|channel|weave|spark)\b", text):
             return answer("You know Spark and Air Hand. Each safe use here costs 1 Strain, with Maerin Sedai supervising. Air Hand can move a visible object of at most 5 kg within 10 paces. Questions do not cast or advance time.")
         if re.search(r"\b(done|finish|complete|next)\b", text) and state["world"]["episode"]["completed"]:
-            return answer("The optional task is finished. You can leave it finished, talk, practise, study a full twenty-minute block or enjoy a quiet interval. None is an additional qualification.")
+            return answer("The letter chapter is finished. Available now: " + "; ".join(c["label"] for c in available.values()) + ". The next chapter keeps the same character and history; it does not reopen the search.")
         if re.search(r"\b(do|approaches|options|available)\b", text):
             return answer("Available now: " + "; ".join(c["label"] for c in available.values()) + ". You can choose below or type a supported approach. No action has been taken.")
         return answer(view(state)["story"])
@@ -282,6 +301,7 @@ def interpret(state, prompt):
         return answer("No action taken. You can choose another approach or ask about the situation.", "clarify")
     command = re.sub(r"^(?:i |she |elin )", "", text).rstrip(".! ")
     patterns = {
+        "next_chapter": r"(?:continue|go|move) to (?:the )?next chapter|begin (?:the )?next chapter",
         "ask_lysa": r"(?:ask|talk to|speak to|listen to) lysa(?: what happened| about (?:her|the) letter)?",
         "look_gallery": r"(?:look around|search|inspect|observe|check)(?: the gallery| the room| the window)?|watch(?: quietly)?",
         "air_letter": r"(?:use|cast|weave) (?:my )?air(?: hand)?(?: to (?:retrieve|lower|bring down|get) (?:the |her )?(?:letter|envelope))?|(?:retrieve|lower) the letter with air(?: hand)?",

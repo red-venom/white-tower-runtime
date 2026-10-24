@@ -111,7 +111,7 @@
     const t = state.fictional_seconds;
     const hours = Math.floor(t / 3600) % 24;
     const minutes = Math.floor(t / 60) % 60;
-    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+    return `Day ${Math.floor(t / 86400) + 1} · ${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
   }
   function renderResources(state) {
     const root = $("resources"); root.replaceChildren();
@@ -171,7 +171,7 @@
       if (choice.stakes) { const stakes = document.createElement("span"); stakes.className = "choice-stakes"; stakes.textContent = choice.requires_roll ? "Uncertain · Review the roll and possible consequences before committing." : choice.stakes; button.append(stakes); }
       button.addEventListener("click", () => choose(choice)); choices.append(button);
     }
-    $("choices-heading").textContent = completed ? "Your quiet interval" : "What do you do?";
+    $("choices-heading").textContent = completed ? "What comes next?" : "What do you do?";
     $("choices-section").hidden = !choices.children.length || !!pending;
     $("ending").hidden = !completed;
     const journal = $("events"); journal.replaceChildren();
@@ -198,7 +198,7 @@
     campaigns.forEach(campaign => {
       const button = document.createElement("button"); button.type = "button"; button.className = "campaign-item"; button.disabled = busy;
       const copy = document.createElement("span"); const title = document.createElement("span"); title.className = "campaign-item-title"; title.textContent = campaign.name || "Sample story";
-      const meta = document.createElement("span"); meta.className = "campaign-item-meta"; meta.textContent = `Saved turn ${campaign.revision ?? 0}`;
+      const meta = document.createElement("span"); meta.className = "campaign-item-meta"; meta.textContent = `${campaign.chapter ? campaign.chapter + " · " : ""}Saved turn ${campaign.revision ?? 0}`;
       copy.append(title, meta); const status = document.createElement("span"); status.className = "campaign-item-current"; status.textContent = current?.id === campaign.id ? "Open" : "Continue →";
       button.append(copy, status); button.addEventListener("click", () => loadCampaign(campaign.id)); root.append(button);
     });
