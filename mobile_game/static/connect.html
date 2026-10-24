@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Connect ChatGPT · White Tower</title><link rel="stylesheet" href="/assets/styles.css">
+<title>Connect ChatGPT · White Tower</title><link rel="stylesheet" href="/assets/styles.css"><link rel="stylesheet" href="/assets/connect.css">
 <script defer src="/assets/connect.js"></script></head>
 <body><header class="site-header"><a class="wordmark" href="/">White Tower</a><span class="pilot-badge">ChatGPT connection</span></header>
 <main class="page-shell"><section class="story-card"><p class="eyebrow">Your world, your storyteller</p>
@@ -8,13 +8,13 @@
 <p id="connect-status" role="status">Checking your sign-in…</p>
 <form id="connect-login" hidden><label for="connect-code">Your White Tower recovery code</label>
 <input id="connect-code" type="password" autocomplete="off" required minlength="40" maxlength="128">
-<button type="submit">Sign in to your saved sandbox</button>
+<button class="button button-primary" type="submit">Sign in to your saved sandbox</button>
 <p>Use the code you saved from the mobile website. <a href="/" target="_blank" rel="noopener">Open White Tower</a> to create a disposable sample or check your existing connection, then return here.</p>
-<button type="button" id="connect-check">Check sign-in again</button></form>
+<button class="button button-secondary" type="button" id="connect-check">Check sign-in again</button></form>
 <section id="connect-consent" hidden><h2>Allow ChatGPT to:</h2><ul>
 <li>Find and read your disposable sandboxes.</li><li>Create samples and commit supported game actions.</li></ul>
 <p>This connection cannot import Aveline, change your login or enable paid AI calls. You can disconnect it here at any time.</p>
-<button id="connect-allow">Allow connection</button><button id="connect-deny">Cancel</button></section>
+<div class="button-row"><button class="button button-primary" id="connect-allow">Allow connection</button><button class="button button-secondary" id="connect-deny">Cancel</button></div></section>
 <section id="connect-manage" hidden><h2>Manage your connection</h2><p>Disconnecting stops existing ChatGPT tokens from accessing your sandbox. Your games stay saved.</p>
-<button id="connect-revoke">Disconnect ChatGPT</button></section>
+<button class="button button-secondary" id="connect-revoke">Disconnect ChatGPT</button></section>
 </section></main></body></html>

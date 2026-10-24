@@ -1,0 +1,11 @@
+.story-card { padding-bottom: 28px; }
+.story-card p, .story-card ul { margin: 0 0 20px; line-height: 1.6; }
+.story-card h1 { font-size: clamp(2.2rem, 6vw, 3.6rem); margin: 12px 0 20px; }
+.story-card h2 { margin: 24px 0 12px; }
+.story-card ul { padding-left: 24px; }
+#connect-status { border-top: 1px solid var(--line); padding-top: 20px; font-size: .9rem; }
+#connect-login label { display: block; margin-bottom: 10px; }
+#connect-code { display: block; width: 100%; min-height: 48px; padding: 12px; margin-bottom: 16px; font: inherit; }
+#connect-login button { margin-bottom: 20px; }
+.button-row { flex-wrap: wrap; }
+@media (max-width: 600px) { .button-row .button { flex: 1; } }

@@ -156,3 +156,18 @@ def test_simultaneous_code_exchange_only_one_succeeds(connected):
     def exchange_once(_):return connected.test_client().post('/oauth/token',data=exchange).status_code
     with ThreadPoolExecutor(max_workers=2) as pool:results=list(pool.map(exchange_once,range(2)))
     assert sorted(results)==[200,400]
+
+def test_expired_codes_grants_and_duplicate_resource_rejected(connected):
+    _,_,_,_,exchange=authorize(connected)
+    remote=connected.test_client()
+    with connected.extensions['store'].connect() as db:
+        db.execute("UPDATE mobile_oauth_codes SET expires_at=now()-interval '1 second'")
+    assert remote.post('/oauth/token',data=exchange).status_code==400
+    _,_,_,_,_,tokens=issue(connected)
+    with connected.extensions['store'].connect() as db:
+        db.execute("UPDATE mobile_oauth_grants SET expires_at=now()-interval '1 second'")
+    assert rpc(remote,tokens['access_token'],'ping').status_code==401
+    from werkzeug.datastructures import MultiDict
+    duplicate=MultiDict([*exchange.items(),('resource','https://evil.example')])
+    assert remote.post('/oauth/token',data=duplicate).status_code==400
+    assert remote.post('/oauth/register',json={'redirect_uris':[REDIRECT],'grant_types':[{}]}).status_code==400
