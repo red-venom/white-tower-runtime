@@ -21,9 +21,10 @@ def app(monkeypatch):
     if name != "mobile_pilot_test":
         pytest.fail("Refusing test cleanup outside the mobile_pilot_test database")
     monkeypatch.setenv("PUBLIC_ORIGIN", "http://localhost")
+    monkeypatch.delenv("WOT_GM_ENABLED", raising=False)
     application = create_app(url, testing=True)
     with candidate.connect() as db:
-        db.execute("TRUNCATE mobile_actions, mobile_campaigns, mobile_sessions, mobile_players, mobile_rate_limits")
+        db.execute("TRUNCATE mobile_gm_requests, mobile_gm_budget, mobile_actions, mobile_campaigns, mobile_sessions, mobile_players, mobile_rate_limits")
     return application
 
 
@@ -36,6 +37,58 @@ def start(client):
     response = client.post("/api/campaigns", json={"request_id": str(uuid.uuid4())}, headers=headers)
     assert response.status_code == 200
     return response.get_json(), headers, credentials
+
+
+def test_authored_adventure_complete_flow_recovery_and_readonly_intents(app):
+    client=app.test_client()
+    _, headers, credentials=start(client)
+    request={"request_id":str(uuid.uuid4()),"episode_id":"gallery-letter-v1"}
+    created=client.post("/api/campaigns",json=request,headers=headers)
+    assert created.status_code==200
+    packet=created.get_json(); base=f'/api/campaigns/{packet["id"]}'
+    assert packet["capabilities"]["typed_intents"] and not packet["capabilities"]["gm_assistant"]
+    for prompt in ("Look around", "Use Air Hand", "Study until the lesson ends"):
+        before=client.get(base).get_json()
+        reply=client.post(base+"/intent",json={"prompt":prompt,"expected_revision":before["revision"]},headers=headers).get_json()
+        assert client.get(base).get_json()==before
+        assert reply["kind"]=="proposal"
+        choice=reply["choice"]
+        action={"action_id":str(uuid.uuid4()),"expected_revision":before["revision"],"choice_id":choice["id"],"choice_hash":choice["choice_hash"]}
+        response=client.post(base+"/actions",json=action,headers=headers)
+        assert response.status_code==200
+        assert client.post(base+"/actions",json=action,headers=headers).get_json()["replayed"] is True
+    saved=client.get(base).get_json()
+    assert saved["revision"]==3 and saved["state"]["completed"]
+    assert saved["state"]["resources"]["strain"]==1
+    assert saved["companion"]["study"]["gallery_review"]["minutes"]==20
+    recovered=app.test_client()
+    assert recovered.post("/api/session/recover",json={"recovery_code":credentials["recovery_code"]}).status_code==200
+    assert recovered.get(base).get_json()==saved
+    journal=recovered.get(base+"/journal?q=Maerin").get_json()
+    assert len(journal["entries"])==3 and "pre_state" not in str(journal)
+    assert client.post(base+"/intent",json={"prompt":"look around","expected_revision":0},headers=headers).status_code==409
+    anonymous=app.test_client()
+    assert anonymous.get(base+"/journal").status_code==401
+    assert client.post(base+"/intent",json={"prompt":"look around","expected_revision":3}).status_code==403
+    conflict={**request,"episode_id":"courtyard-cover-disposable-v1"}
+    assert client.post("/api/campaigns",json=conflict,headers=headers).status_code==409
+
+
+def test_journal_pagination_and_literal_search(app):
+    client=app.test_client();packet,headers,_=start(client);base=f'/api/campaigns/{packet["id"]}'
+    def act(id):
+        nonlocal packet
+        c=next(c for c in packet["state"]["choices"] if c["id"]==id)
+        packet=client.post(base+"/actions",headers=headers,json={"action_id":str(uuid.uuid4()),"expected_revision":packet["revision"],"choice_id":id,"choice_hash":c["choice_hash"]}).get_json()
+    act("decline_task")
+    for _ in range(32):act("quiet_interval")
+    first=client.get(base+"/journal?q=quiet").get_json()
+    assert len(first["entries"])==30
+    second=client.get(base+f'/journal?q=quiet&before={first["next_before"]}').get_json()
+    assert len(second["entries"])==2 and second["next_before"] is None
+    assert not set(e["revision"] for e in first["entries"]) & set(e["revision"] for e in second["entries"])
+    assert client.get(base+"/journal?q=%25").get_json()["entries"]==[]
+    assert client.get(base+"/journal?before=bad").status_code==422
 
 
 def action(packet, choice_id="accept_task"):
@@ -145,6 +198,142 @@ def test_invalid_recovery_never_creates_or_replaces_an_owner(app, bad):
         assert db.execute("SELECT count(*) AS n FROM mobile_sessions").fetchone()["n"] == 1
 
 
+def enable_test_gm(app, interpreter):
+    app.extensions["store"].gm_policy = {"max_requests": 20, "budget_micro_usd": 1_000_000, "reservation_micro_usd": 23_700}
+    app.extensions["gm_interpreter"] = interpreter
+
+
+def gm_http_request(packet):
+    return {"request_id": str(uuid.uuid4()), "expected_revision": packet["revision"], "prompt": "Could I move the readers inside?"}
+
+
+def gm_http_result():
+    return {"kind": "proposal", "choice_id": "move_inside", "message": "Moving inside is available.",
+            "usage": {"input_tokens": 30, "output_tokens": 10, "total_tokens": 40}}
+
+
+def test_http_gm_disabled_does_not_reserve_or_call(app):
+    client = app.test_client()
+    packet, headers, _ = start(client)
+    app.extensions["gm_interpreter"] = lambda *_: pytest.fail("disabled provider call")
+    response = client.post("/api/campaigns/" + packet["id"] + "/gm-requests", json=gm_http_request(packet), headers=headers)
+    assert response.status_code == 503 and response.get_json()["error"] == "GM_DISABLED"
+    assert packet["capabilities"]["gm_assistant"] is False
+    with app.extensions["store"].connect() as db:
+        assert db.execute("SELECT count(*) AS n FROM mobile_gm_requests").fetchone()["n"] == 0
+        assert db.execute("SELECT count(*) AS n FROM mobile_gm_budget").fetchone()["n"] == 0
+
+
+def test_http_gm_requires_owner_and_csrf_before_provider_or_reservation(app):
+    enable_test_gm(app, lambda *_: pytest.fail("unauthorized provider call"))
+    client = app.test_client()
+    packet, headers, _ = start(client)
+    route = "/api/campaigns/" + packet["id"] + "/gm-requests"
+    value = gm_http_request(packet)
+    assert app.test_client().post(route, json=value).status_code == 401
+    assert client.post(route, json=value).status_code == 403
+    assert client.post(route, json=value, headers={**headers, "Origin": "https://foreign.invalid"}).status_code == 403
+    stranger = app.test_client()
+    _, stranger_headers, _ = start(stranger)
+    assert stranger.post(route, json=value, headers=stranger_headers).status_code == 404
+    assert stranger.get(route + "/" + value["request_id"]).status_code == 404
+    with app.extensions["store"].connect() as db:
+        assert db.execute("SELECT count(*) AS n FROM mobile_gm_requests").fetchone()["n"] == 0
+
+
+def test_http_gm_proposal_is_readonly_exactly_retrievable_and_normal_action_remains_required(app):
+    calls = []
+    enable_test_gm(app, lambda *_: (calls.append(True), gm_http_result())[1])
+    client = app.test_client()
+    packet, headers, _ = start(client)
+    route = "/api/campaigns/" + packet["id"]
+    value = gm_http_request(packet)
+    response = client.post(route + "/gm-requests", json=value, headers=headers)
+    assert response.status_code == 200
+    result = response.get_json()
+    assert result["status"] == "completed" and result["expected_revision"] == 0
+    offered = next(c for c in packet["state"]["choices"] if c["id"] == "move_inside")
+    assert result["result"]["choice_hash"] == offered["choice_hash"]
+    assert client.get(route).get_json() == packet
+    assert client.get(route + "/gm-requests/" + value["request_id"]).get_json() == result
+    assert client.post(route + "/gm-requests", json=value, headers=headers).get_json() == result
+    changed = client.post(route + "/gm-requests", json={**value, "prompt": "Different input"}, headers=headers)
+    assert changed.status_code == 409 and changed.get_json()["error"] == "GM_REQUEST_ID_CONFLICT"
+    assert calls == [True]
+    advanced = client.post(route + "/actions", json=action(packet, "move_inside"), headers=headers)
+    assert advanced.status_code == 200 and advanced.get_json()["revision"] == 1
+    assert client.post(route + "/gm-requests", json=value, headers=headers).get_json() == result
+    stale = client.post(route + "/gm-requests", json={**value, "request_id": str(uuid.uuid4())}, headers=headers)
+    assert stale.status_code == 409 and stale.get_json()["error"] == "STALE_REVISION"
+    assert calls == [True]
+
+
+def test_http_gm_prepared_poll_and_retry_202_then_unknown_never_recall(app):
+    enable_test_gm(app, lambda *_: pytest.fail("crashed request must not call provider"))
+    client = app.test_client()
+    packet, headers, credentials = start(client)
+    route = "/api/campaigns/" + packet["id"] + "/gm-requests"
+    value = gm_http_request(packet)
+    class Crash(BaseException):
+        pass
+    def crash(_):
+        raise Crash()
+    store = app.extensions["store"]
+    with pytest.raises(Crash):
+        store.gm_request(credentials["player_id"], packet["id"], value, app.extensions["gm_interpreter"], fault=crash)
+    for response in (client.get(route + "/" + value["request_id"]), client.post(route, json=value, headers=headers)):
+        assert response.status_code == 202 and response.get_json()["status"] == "prepared"
+        assert response.headers["Retry-After"] == "1"
+    with store.connect() as db:
+        db.execute("UPDATE mobile_gm_requests SET expires_at=now()-interval '1 second'")
+    result = client.get(route + "/" + value["request_id"])
+    assert result.status_code == 200 and result.get_json()["status"] == "unknown"
+    assert client.post(route, json=value, headers=headers).get_json() == result.get_json()
+    assert client.get("/api/campaigns/" + packet["id"]).get_json() == packet
+
+
+def test_http_gm_billing_failure_exposes_only_safe_error_and_never_retries(app):
+    from mobile_game.gm import GMError
+    calls = []
+    def unavailable(*_):
+        calls.append(True)
+        error = GMError("GM_BILLING_UNAVAILABLE", attempted=True)
+        error.message = "private provider error with credential-like fixture"
+        raise error
+    enable_test_gm(app, unavailable)
+    client = app.test_client()
+    packet, headers, _ = start(client)
+    route = "/api/campaigns/" + packet["id"] + "/gm-requests"
+    value = gm_http_request(packet)
+    response = client.post(route, json=value, headers=headers)
+    assert response.status_code == 200
+    result = response.get_json()
+    assert result["status"] == "unknown" and result["error"]["code"] == "GM_BILLING_UNAVAILABLE"
+    assert "private provider" not in response.get_data(as_text=True)
+    assert client.post(route, json=value, headers=headers).get_json() == result
+    assert calls == [True]
+    assert client.get("/api/campaigns/" + packet["id"]).get_json() == packet
+
+
+@pytest.mark.parametrize("enable,maximum,budget,allowed", [
+    (None, "20", "1000000", False), ("0", "20", "1000000", False),
+    ("1", None, "1000000", False), ("1", "20", None, False),
+    ("1", "0", "1000000", False), ("1", "20", "0", False),
+    ("1", "20", "23700", True), ("1", "20", "23699", False),
+])
+def test_http_gm_requires_explicit_limited_enable_even_with_configured_provider(app, monkeypatch, enable, maximum, budget, allowed):
+    from mobile_game import gm
+    monkeypatch.setattr(gm, "configured", lambda: True)
+    for name, value in (("WOT_GM_ENABLED", enable), ("WOT_GM_MAX_REQUESTS", maximum), ("WOT_GM_BUDGET_MICRO_USD", budget)):
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+    configured_app = create_app(app.extensions["store"].url, testing=True,
+                                gm_interpreter=lambda *_: pytest.fail("configuration test must not call provider"))
+    assert (configured_app.extensions["store"].gm_policy is not None) == allowed
+
+
 def test_session_lookup_is_read_only_and_owner_identity_survives_recovery(app):
     client = app.test_client()
     assert client.get("/api/session").status_code == 401
@@ -216,7 +405,7 @@ def test_session_cookie_and_responses_have_private_browser_headers(app):
     health = client.get("/health")
     assert health.status_code == 200 and health.get_json()["database"] == "postgresql"
     assert health.get_json()["live_import"] is False
-    assert health.get_json()["release"] == "mobile-disposable-pilot-v2"
+    assert health.get_json()["release"] == "mobile-disposable-pilot-v4"
 
 
 def test_production_uses_secure_cookie_and_hsts(app, monkeypatch):

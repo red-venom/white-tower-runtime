@@ -11,8 +11,13 @@ EPISODE_ID = "courtyard-cover-disposable-v1"
 MAX_INT = 2**53 - 1
 
 
-def initial_state():
+def initial_state(episode_id=None):
     """Return independent complete sample state; setup ratings are test fixtures."""
+    if episode_id is not None and episode_id != EPISODE_ID:
+        from . import adventure
+        if episode_id != adventure.EPISODE_ID:
+            raise ValueError("Unknown disposable episode.")
+        return adventure.initial_state()
     return {
         "schema": "mobile-disposable-state-v1", "rules_edition": RULES_EDITION,
         "disposable": True,
@@ -148,6 +153,9 @@ def _choices(state):
 
 def view(state):
     """Explicit public projection; unknown and private state never leak by default."""
+    from . import adventure
+    if state.get("world", {}).get("episode", {}).get("id") == adventure.EPISODE_ID:
+        return adventure.view(state)
     _validate(state)
     episode = state["world"]["episode"]
     stories = {
@@ -190,6 +198,9 @@ def _finish(state, result):
 
 def resolve(state, choice_id, dice=None):
     """Compute one available choice. Input state is never mutated, including on error."""
+    from . import adventure
+    if state.get("world", {}).get("episode", {}).get("id") == adventure.EPISODE_ID:
+        return adventure.resolve(state, choice_id, dice)
     _validate(state)
     _need(type(choice_id) is str, "Choose a listed action.")
     choices = {choice["id"]: choice for choice in _choices(state)}

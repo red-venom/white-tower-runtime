@@ -5,9 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#f4efe5">
   <meta name="color-scheme" content="light">
-  <title>White Tower · Mobile pilot</title>
+  <title>White Tower · Stories</title>
   <link rel="stylesheet" href="/assets/styles.css">
   <script defer src="/assets/app.js"></script>
+  <script defer src="/assets/experience.js"></script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to the story</a>
@@ -16,7 +17,7 @@
       <svg class="tower-mark" viewBox="0 0 32 40" aria-hidden="true"><path d="M6 37h20M9 35l3-26h8l3 26M11 9l5-6 5 6M14 18h4M13 26h6M16 32v5"/></svg>
       <span>White Tower<span class="wordmark-sub">A story carried with you</span></span>
     </a>
-    <span class="pilot-badge">Mobile pilot</span>
+    <span class="pilot-badge">Tower stories</span>
   </header>
 
   <main id="main" class="page-shell" tabindex="-1">
@@ -32,17 +33,20 @@
 
     <section id="welcome" class="welcome" hidden>
       <div class="welcome-ornament" aria-hidden="true">✧</div>
-      <p class="eyebrow">Disposable mobile pilot</p>
-      <h1>A small beginning.<br>A place to return to.</h1>
-      <p class="welcome-copy">Play a short, prepared episode in the White Tower. Your choices and progress are saved online, ready when you return.</p>
+      <p class="eyebrow">An original White Tower adventure</p>
+      <h1>A little courage.<br>A story of your own.</h1>
+      <p class="welcome-copy">A letter from home. A lesson in restraint. A choice that belongs to you. Step into the Tower with a disposable character, and return whenever you have a moment.</p>
+      <label class="episode-label" for="episode-select">Choose your story</label><select id="episode-select"><option value="gallery-letter-v1">The Letter in the Gallery · conversation &amp; channeling</option><option value="courtyard-cover-disposable-v1">A Shower in the Gardens · original short rehearsal</option></select>
       <button id="start-campaign" class="button button-primary">Begin a sample story <span aria-hidden="true">→</span></button>
       <p class="quiet-copy">Sample characters only. Aveline’s campaign is untouched.</p>
       <div class="welcome-notes"><div><span aria-hidden="true">01</span><strong>Choose your approach</strong><p>See the stakes before taking a risk.</p></div><div><span aria-hidden="true">02</span><strong>Leave and return</strong><p>Your desktop can stay switched off.</p></div><div><span aria-hidden="true">03</span><strong>Reach an ending</strong><p>A complete scene, with time to breathe.</p></div></div>
     </section>
 
     <section id="game" hidden aria-label="Current story">
+      <nav class="reading-controls" aria-label="Reading preferences"><button id="reading-theme" class="text-button" type="button">Night reading</button><button id="reading-size" class="text-button" type="button">Larger text</button></nav>
       <div class="chapter-heading"><div><p class="eyebrow">Disposable sample · <span id="chapter-status">In progress</span></p><h1 id="story-title"></h1><p id="character-line" class="character-line"></p></div><span class="chapter-ornament" aria-hidden="true">✧</span></div>
       <div id="resources" class="resources" aria-label="Character resources"></div>
+      <details id="return-card" class="return-card" hidden><summary>Where you left off</summary><p id="return-location"></p><p id="return-objective"></p><div id="return-recap" class="story-prose"></div></details>
       <article class="story-card" aria-labelledby="scene-heading">
         <div class="story-card-heading"><h2 id="scene-heading">Your story</h2><span id="story-time" class="story-time"></span></div>
         <div id="story" class="story-prose"></div>
@@ -50,15 +54,27 @@
         <div class="save-line"><span class="save-check" aria-hidden="true">✓</span><span id="save-status">Saved</span></div>
       </article>
 
+      <section id="intent-section" class="intent-section" hidden aria-labelledby="intent-heading"><p class="eyebrow">Your next move</p><h2 id="intent-heading">What do you do?</h2><form id="intent-form"><label class="visually-hidden" for="intent-text">Your action or question</label><textarea id="intent-text" maxlength="2000" rows="3" placeholder="Look around, ask Lysa what happened, or describe an available approach…"></textarea><div class="intent-footer"><span id="draft-status">Questions leave the story unchanged.</span><button id="intent-submit" class="button button-primary">Continue →</button></div></form><p id="intent-reply" role="status" hidden></p><p class="quiet-copy">Type a supported approach, or choose below. Questions never spend game time. General AI roleplay is not enabled.</p></section>
+
+
+
       <section id="pending-card" class="pending-card" aria-labelledby="pending-heading" hidden>
         <p class="eyebrow">Your choice is kept</p><h2 id="pending-heading">Checking your save</h2><p id="pending-description"></p>
         <button id="retry-action" class="button button-primary">Check and retry safely</button>
         <p class="quiet-copy">This checks the same choice. It won’t take the action twice.</p>
       </section>
 
+      <section id="gm-section" class="gm-section" aria-labelledby="gm-heading" hidden>
+        <p class="eyebrow">Sample scene assistant</p><h2 id="gm-heading">Describe your approach — sample scene</h2>
+        <p class="gm-introduction">Ask about this scene or describe what you would like to do. The assistant can suggest a supported sample choice; it cannot add new abilities or continue a full campaign.</p>
+        <form id="gm-form"><label class="visually-hidden" for="gm-prompt">Your approach or question</label><textarea id="gm-prompt" maxlength="2000" rows="3" placeholder="For example: Could I help move the books somewhere dry?"></textarea><div class="gm-form-footer"><span>No time passes until you choose an action.</span><button id="gm-submit" class="button button-secondary" type="submit">Ask about this approach</button></div></form>
+        <div id="gm-response" class="gm-response" role="status" hidden><p id="gm-status" class="gm-status"></p><div id="gm-message" class="gm-message"></div><p id="gm-response-note" class="quiet-copy"></p><div class="button-row"><button id="gm-proposal" class="button button-primary" hidden></button><button id="gm-retry" class="button button-secondary" hidden>Check this request</button><button id="gm-new" class="text-button" hidden>Ask another question</button><button id="gm-dismiss" class="text-button" hidden>Close response</button></div></div>
+      </section>
+
       <section id="choices-section" class="choices-section" aria-labelledby="choices-heading"><div class="section-heading"><h2 id="choices-heading">What do you do?</h2><span>Choose an approach</span></div><div id="choices" class="choices"></div></section>
       <section id="ending" class="ending" hidden><span aria-hidden="true">✧</span><h2>This episode is complete.</h2><p>Your choices and ending are saved. You can revisit the journal, keep a copy, or start another disposable sample.</p></section>
-      <details id="journal" class="journal"><summary>Your journal <span id="journal-count"></span></summary><div id="events"></div></details>
+      <section id="companion" class="companion" hidden aria-label="Your campaign notebook"><p class="eyebrow">Your notebook</p><details><summary>Character &amp; the One Power</summary><div id="character-sheet"></div></details><details><summary>People you know</summary><div id="people-sheet"></div></details><details><summary>Discoveries &amp; learning</summary><div id="learning-sheet"></div></details><details><summary>About this world</summary><div id="lore-sheet"></div></details></section>
+      <details id="journal" class="journal"><summary>Your journal <span id="journal-count"></span></summary><form id="journal-search"><label class="visually-hidden" for="journal-query">Search your saved journal</label><input id="journal-query" maxlength="200" placeholder="Search people, discoveries or moments…"><button class="button button-secondary">Search</button></form><p id="journal-search-status" role="status"></p><div id="journal-results" hidden></div><button id="journal-more" class="text-button" hidden>Earlier entries</button><div id="events"></div></details>
       <div class="story-actions"><button id="export-campaign" class="text-button">Download a save copy <span aria-hidden="true">↗</span></button><button id="refresh-campaign" class="text-button">Refresh saved story</button></div>
     </section>
 
@@ -67,7 +83,7 @@
     <details id="restore-details" class="restore-details"><summary>Recovery and another browser</summary><form id="restore-form"><label for="restore-code">Your recovery code</label><input id="restore-code" name="recovery_code" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste your saved code" required><button id="restore-button" class="button button-secondary" type="submit">Restore my stories</button><p class="quiet-copy">Use the code from your original browser. Keep it private.</p></form>
       <div class="replace-recovery"><p class="quiet-copy">Already connected, but haven’t kept your code?</p><button id="new-recovery-code" class="text-button" aria-expanded="false" aria-controls="replace-recovery-confirmation">Create a new recovery code</button><div id="replace-recovery-confirmation" class="replace-recovery-confirmation" hidden><p>The new code will replace your previous one. Your old code will stop working; this browser will stay connected.</p><div class="button-row"><button id="confirm-recovery-code" class="button button-secondary">Replace code</button><button id="cancel-recovery-code" class="text-button">Cancel</button></div></div></div>
     </details>
-    <footer class="site-footer"><p>A prepared sample episode, with choices and saved progress.<br>Freeform roleplay is not part of this pilot.</p><p>Online connection required · Progress saved in the cloud</p></footer>
+    <footer class="site-footer"><p>Original authored adventures · Your decisions, faithfully kept.<br>Disposable characters only. Full campaign migration is not enabled.</p><p>Online connection required · Progress saved in the cloud</p></footer>
   </main>
 
   <dialog id="risk-dialog" aria-labelledby="risk-title"><form method="dialog"><p class="eyebrow">Before you choose</p><h2 id="risk-title"></h2><p id="risk-description"></p><div class="stakes-box"><strong>At stake</strong><p id="risk-stakes"></p></div><p class="quiet-copy">This approach includes a roll. The result will be saved with your choice.</p><div class="dialog-actions"><button value="cancel" class="button button-secondary">Go back</button><button id="confirm-risk" value="confirm" class="button button-primary">Take this approach</button></div></form></dialog>

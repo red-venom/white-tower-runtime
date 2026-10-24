@@ -4,6 +4,7 @@ import hmac
 import json
 import secrets
 import uuid
+from copy import deepcopy
 from datetime import datetime, timezone
 
 import psycopg
@@ -71,15 +72,38 @@ CREATE TABLE IF NOT EXISTS mobile_actions (
 CREATE TABLE IF NOT EXISTS mobile_rate_limits (
     bucket text PRIMARY KEY, starts_at timestamptz NOT NULL DEFAULT now(), count integer NOT NULL
 );
+CREATE TABLE IF NOT EXISTS mobile_gm_budget (
+    id text PRIMARY KEY CHECK (id = 'bounded-pilot-v1'),
+    reserved_requests bigint NOT NULL CHECK (reserved_requests >= 0),
+    reserved_micro_usd bigint NOT NULL CHECK (reserved_micro_usd >= 0)
+);
+CREATE TABLE IF NOT EXISTS mobile_gm_requests (
+    campaign_id uuid NOT NULL REFERENCES mobile_campaigns(id), request_id uuid NOT NULL,
+    expected_revision bigint NOT NULL CHECK (expected_revision >= 0),
+    request_hash text NOT NULL, prompt text NOT NULL, public_state jsonb NOT NULL,
+    status text NOT NULL CHECK (status IN ('prepared','completed','failed','unknown')),
+    reserved_micro_usd bigint NOT NULL CHECK (reserved_micro_usd > 0),
+    result jsonb, usage jsonb, error_code text,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    expires_at timestamptz NOT NULL DEFAULT now() + interval '45 seconds',
+    finished_at timestamptz,
+    PRIMARY KEY(campaign_id, request_id)
+);
+ALTER TABLE mobile_gm_requests ADD COLUMN IF NOT EXISTS error_code text;
 CREATE INDEX IF NOT EXISTS mobile_campaign_owner ON mobile_campaigns(player_id, updated_at);
 """
 
 
 class Store:
-    def __init__(self, url):
+    def __init__(self, url, *, gm_policy=None):
         if not url:
             raise RuntimeError("DATABASE_URL is required; there is no local-file fallback")
         self.url = url
+        if gm_policy is not None and (
+                type(gm_policy) is not dict or set(gm_policy) != {"max_requests", "budget_micro_usd", "reservation_micro_usd"} or
+                any(type(value) is not int or not 1 <= value <= 2**53-1 for value in gm_policy.values())):
+            raise ValueError("Invalid bounded GM policy")
+        self.gm_policy = deepcopy(gm_policy)
 
     def connect(self):
         return psycopg.connect(self.url, row_factory=dict_row, connect_timeout=10,
@@ -152,23 +176,29 @@ class Store:
                               (player,)).fetchall()
         return [{**r, "id": str(r["id"]), "updated_at": r["updated_at"].isoformat()} for r in rows]
 
-    def create(self, player, request_id):
+    def create(self, player, request_id, episode_id=None):
         identifier(request_id)
+        try:
+            initial = rules.initial_state(episode_id)
+        except ValueError as exc:
+            raise Problem(422, "UNKNOWN_EPISODE", str(exc)) from None
         with self.connect() as db:
             # Serialize creation for one owner, including retries after lost replies.
             db.execute("SELECT id FROM mobile_players WHERE id=%s FOR UPDATE", (player,))
             old = db.execute("SELECT * FROM mobile_campaigns WHERE player_id=%s AND creation_request=%s",
                              (player, request_id)).fetchone()
             if old:
+                if old["state"]["world"]["episode"]["id"] != initial["world"]["episode"]["id"]:
+                    raise Problem(409, "CREATION_CONFLICT", "This request already created a different episode.")
                 return self._packet(db, old)
             count = db.execute("SELECT count(*) AS n FROM mobile_campaigns WHERE player_id=%s", (player,)).fetchone()["n"]
             if count >= 20:
                 raise Problem(429, "SAMPLE_LIMIT", "Your 20 sample campaigns are saved. Resume one of them.")
-            state, campaign = rules.initial_state(), str(uuid.uuid4())
+            state, campaign = initial, str(uuid.uuid4())
             head = digest({"campaign_id": campaign, "revision": 0, "state": state})
             row = db.execute("""INSERT INTO mobile_campaigns(id,player_id,creation_request,name,state,seed,head)
                  VALUES(%s,%s,%s,%s,%s,%s,%s) RETURNING *""",
-                 (campaign, player, request_id, "Elin — disposable rehearsal", Jsonb(state), secrets.token_bytes(32), head)).fetchone()
+                 (campaign, player, request_id, rules.view(state)["title"], Jsonb(state), secrets.token_bytes(32), head)).fetchone()
             result = self._packet(db, row)
         return result
 
@@ -188,9 +218,43 @@ class Store:
                    "created_at": t["created_at"].isoformat()} for t in reversed(turns)]
         public = rules.view(row["state"])
         public["choices"] = [{**c, "choice_hash": digest(c)} for c in public["choices"]]
+        from . import adventure
+        authored = public["episode_id"] == adventure.EPISODE_ID
         return {"id": str(row["id"]), "revision": row["revision"], "head": row["head"],
                 "state": public, "events": events,
-                "disposable": True, "capabilities": {"freeform": False, "import_live_campaign": False}}
+                "companion": adventure.companion(row["state"]) if authored else None,
+                "disposable": True, "capabilities": {"freeform": False, "import_live_campaign": False,
+                                                      "typed_intents": authored,
+                                                      "gm_assistant": self.gm_policy is not None and not authored}}
+
+    def interpret_intent(self, player, campaign, expected_revision, prompt):
+        from . import adventure
+        with self.connect() as db:
+            row = self._owned(db, player, campaign)
+            if type(expected_revision) is not int or expected_revision != row["revision"]:
+                raise Problem(409, "STALE_REVISION", "The story changed. Refresh before choosing your approach.")
+            if row["state"]["world"]["episode"]["id"] != adventure.EPISODE_ID:
+                raise Problem(422, "UNSUPPORTED_EPISODE", "Use the listed approaches for this episode.")
+            try:
+                result = adventure.interpret(row["state"], prompt)
+            except (ValueError, UnicodeError) as exc:
+                raise Problem(422, "INVALID_INTENT", "Use a valid message of at most 2,000 characters.") from None
+            choices = {c["id"]: c for c in rules.view(row["state"])["choices"]}
+            choice = choices.get(result["choice_id"])
+            return {**result, "expected_revision": expected_revision,
+                    "choice": {**choice, "choice_hash": digest(choice)} if choice else None}
+
+    def journal(self, player, campaign, before, query):
+        if type(before) is not int or not 1 <= before <= 2**53-1 or type(query) is not str or len(query) > 200 or "\x00" in query:
+            raise Problem(422, "INVALID_JOURNAL_QUERY", "Use a short journal search.")
+        with self.connect() as db:
+            self._owned(db, player, campaign)
+            rows = db.execute("""SELECT revision,event->>'narration' AS narration,event->'roll' AS roll
+                FROM mobile_actions WHERE campaign_id=%s AND revision<%s
+                AND position(lower(%s) in lower(event->>'narration'))>0 ORDER BY revision DESC LIMIT 31""",
+                (campaign, before, query)).fetchall()
+            page = rows[:30]
+            return {"entries": page, "next_before": page[-1]["revision"] if len(rows)>30 else None}
 
     def read(self, player, campaign):
         with self.connect() as db:
@@ -275,3 +339,135 @@ class Store:
                       "note": "Portable audit export; keep your recovery code to resume the cloud campaign. No live campaign import is enabled."}
             result["sha256"] = digest(result)
         return result
+
+    @staticmethod
+    def _gm_packet(row):
+        status = row["status"]
+        error = None
+        if status == "failed":
+            error = {"code": "GM_UNAVAILABLE", "message": "The interpretation could not start. Your campaign did not advance."}
+        elif status == "unknown":
+            error = {"code": "GM_UNCERTAIN", "message": "The provider result could not be confirmed. This request will not be sent again. Your campaign did not advance."}
+        if status in ("failed", "unknown") and row.get("error_code"):
+            from .gm import GMError
+            safe = GMError(row["error_code"])
+            error = {"code": safe.code, "message": safe.message + " This request will not be sent again."}
+        return {"request_id": str(row["request_id"]), "expected_revision": row["expected_revision"],
+                "status": status, "result": deepcopy(row["result"]) if status == "completed" else None,
+                "error": error}
+
+    @staticmethod
+    def _gm_find(db, campaign, request_id):
+        # A worker may have died before, during, or after its one provider call.
+        # Expiration closes the reservation; it never authorizes another call.
+        db.execute("""UPDATE mobile_gm_requests SET status='unknown',finished_at=now()
+                      WHERE campaign_id=%s AND request_id=%s AND status='prepared' AND expires_at<=now()""",
+                   (campaign, request_id))
+        return db.execute("SELECT * FROM mobile_gm_requests WHERE campaign_id=%s AND request_id=%s",
+                          (campaign, request_id)).fetchone()
+
+    def gm_status(self, player, campaign, request_id):
+        identifier(request_id)
+        with self.connect() as db:
+            self._owned(db, player, campaign)
+            row = self._gm_find(db, campaign, request_id)
+            if row is None:
+                raise Problem(404, "GM_REQUEST_NOT_FOUND", "This interpretation request is not available.")
+            return self._gm_packet(row)
+
+    @staticmethod
+    def _gm_result(value, public):
+        from .gm import MAX_MESSAGE_CHARS
+        if type(value) is not dict or set(value) != {"kind", "choice_id", "message", "usage"}:
+            raise ValueError("Invalid bounded GM result")
+        kind, choice_id, message = value["kind"], value["choice_id"], value["message"]
+        if kind not in ("proposal", "answer", "clarify") or type(message) is not str or not 1 <= len(message) <= MAX_MESSAGE_CHARS or not message.strip() or "\x00" in message:
+            raise ValueError("Invalid bounded GM result")
+        canonical(message)  # Reject invalid Unicode before the PostgreSQL write.
+        choice_hash = None
+        if kind == "proposal":
+            choices = {choice["id"]: choice for choice in public["choices"]}
+            if type(choice_id) is not str or choice_id not in choices:
+                raise ValueError("Unsupported GM proposal")
+            choice_hash = digest(choices[choice_id])
+        elif choice_id is not None:
+            raise ValueError("Non-proposals cannot select actions")
+        usage = value["usage"]
+        if type(usage) is not dict or set(usage) != {"input_tokens", "output_tokens", "total_tokens"} or any(
+                v is not None and (type(v) is not int or not 0 <= v <= 2**53-1) for v in usage.values()):
+            raise ValueError("Invalid GM usage")
+        return {"kind": kind, "choice_id": choice_id, "choice_hash": choice_hash, "message": message}, usage
+
+    def gm_request(self, player, campaign, request, interpreter, *, fault=None):
+        """Reserve once, call outside all transactions, then persist a safe result.
+
+        Reservations are lifetime, global, and never refunded. Neither retries
+        nor expired workers can spend again under an existing request ID.
+        """
+        if type(request) is not dict or set(request) != {"request_id", "expected_revision", "prompt"}:
+            raise Problem(422, "INVALID_GM_REQUEST", "Provide one bounded interpretation request.")
+        from .gm import MAX_PROMPT_CHARS, MAX_PROMPT_BYTES
+        request_id = identifier(request["request_id"])
+        expected, prompt = request["expected_revision"], request["prompt"]
+        if type(expected) is not int or not 0 <= expected <= 2**53-1 or type(prompt) is not str or not 1 <= len(prompt) <= MAX_PROMPT_CHARS or not prompt.strip() or "\x00" in prompt:
+            raise Problem(422, "INVALID_GM_REQUEST", f"Use a message of at most {MAX_PROMPT_CHARS} characters and the current revision.")
+        try:
+            if len(canonical(prompt)) > MAX_PROMPT_BYTES + 2:
+                raise ValueError()
+        except (UnicodeError, ValueError):
+            raise Problem(422, "INVALID_GM_REQUEST", "The message is not valid bounded text.") from None
+        request_hash = digest(request)
+        with self.connect() as db:
+            campaign_row = self._owned(db, player, campaign, lock=True)
+            old = self._gm_find(db, campaign, request_id)
+            if old:
+                if not hmac.compare_digest(old["request_hash"], request_hash):
+                    raise Problem(409, "GM_REQUEST_ID_CONFLICT", "This request identifier belongs to different input.")
+                return self._gm_packet(old)
+            policy = self.gm_policy
+            if policy is None or not callable(interpreter):
+                raise Problem(503, "GM_DISABLED", "The sample interpreter is not enabled. Use the listed choices.")
+            if campaign_row["state"].get("disposable") is not True:
+                raise Problem(422, "GM_DISPOSABLE_ONLY", "This interpreter supports only the disposable sample.")
+            if campaign_row["state"]["world"]["episode"]["id"] != rules.EPISODE_ID:
+                raise Problem(422, "GM_UNSUPPORTED_EPISODE", "This adventure uses its local authored interpreter.")
+            if campaign_row["revision"] != expected:
+                raise Problem(409, "STALE_REVISION", "The campaign changed. Refresh before requesting an interpretation.")
+            public = rules.view(campaign_row["state"])
+            db.execute("""INSERT INTO mobile_gm_budget(id,reserved_requests,reserved_micro_usd)
+                          VALUES('bounded-pilot-v1',0,0) ON CONFLICT(id) DO NOTHING""")
+            budget = db.execute("SELECT * FROM mobile_gm_budget WHERE id='bounded-pilot-v1' FOR UPDATE").fetchone()
+            reservation = policy["reservation_micro_usd"]
+            if budget["reserved_requests"] >= policy["max_requests"] or budget["reserved_micro_usd"] + reservation > policy["budget_micro_usd"]:
+                raise Problem(429, "GM_BUDGET_EXHAUSTED", "The configured sample interpretation allowance has been used. Listed choices remain available.")
+            db.execute("""UPDATE mobile_gm_budget SET reserved_requests=reserved_requests+1,
+                          reserved_micro_usd=reserved_micro_usd+%s WHERE id='bounded-pilot-v1'""", (reservation,))
+            db.execute("""INSERT INTO mobile_gm_requests(campaign_id,request_id,expected_revision,request_hash,prompt,public_state,status,reserved_micro_usd)
+                          VALUES(%s,%s,%s,%s,%s,%s,'prepared',%s)""",
+                       (campaign, request_id, expected, request_hash, prompt, Jsonb(public), reservation))
+        if fault:
+            fault("after_reservation")
+        status, result, usage, error_code = "unknown", None, None, None
+        try:
+            value = interpreter(deepcopy(public), prompt)
+            result, usage = self._gm_result(value, public)
+            status = "completed"
+        except Exception as exc:
+            # Only the adapter's typed, definitely-not-started error may use
+            # failed. Every other error is uncertain; none permits a retry.
+            from .gm import GMError
+            status = "failed" if isinstance(exc, GMError) and exc.attempted is False else "unknown"
+            if isinstance(exc, GMError):
+                safe = GMError(exc.code, usage=exc.usage)
+                error_code, usage = safe.code, safe.usage
+        if fault:
+            fault("after_provider")
+        with self.connect() as db:
+            self._owned(db, player, campaign)
+            self._gm_find(db, campaign, request_id)
+            db.execute("""UPDATE mobile_gm_requests SET status=%s,result=%s,usage=%s,error_code=%s,finished_at=now()
+                          WHERE campaign_id=%s AND request_id=%s AND status='prepared' AND expires_at>now()""",
+                       (status, Jsonb(result), Jsonb(usage), error_code, campaign, request_id))
+            row = db.execute("SELECT * FROM mobile_gm_requests WHERE campaign_id=%s AND request_id=%s",
+                             (campaign, request_id)).fetchone()
+            return self._gm_packet(row)

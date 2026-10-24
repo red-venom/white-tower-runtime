@@ -29,7 +29,7 @@ def store():
         pytest.fail("Refusing test cleanup outside the mobile_pilot_test database")
     candidate.initialize()
     with candidate.connect() as db:
-        db.execute("TRUNCATE mobile_actions, mobile_campaigns, mobile_sessions, mobile_players, mobile_rate_limits")
+        db.execute("TRUNCATE mobile_gm_requests, mobile_gm_budget, mobile_actions, mobile_campaigns, mobile_sessions, mobile_players, mobile_rate_limits")
     yield candidate
 
 
@@ -299,3 +299,240 @@ def test_lost_recovery_code_can_be_replaced_without_changing_identity_or_save(st
         assert row["recovery_hash"] == secret_hash(replacement)
         assert db.execute("SELECT count(*) AS n FROM mobile_players").fetchone()["n"] == 1
     assert counts(store) == {"actions": 1, "campaigns": 1}
+
+
+GM_POLICY = {"max_requests": 20, "budget_micro_usd": 1_000_000, "reservation_micro_usd": 23_700}
+
+
+def gm_request(packet, prompt="May I use the covered space?"):
+    return {"request_id": str(uuid.uuid4()), "expected_revision": packet["revision"], "prompt": prompt}
+
+
+def gm_result(kind="proposal", choice_id="move_inside"):
+    return {"kind": kind, "choice_id": choice_id if kind == "proposal" else None,
+            "message": "The covered space is an available option.",
+            "usage": {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120}}
+
+
+def gm_counts(store):
+    with store.connect() as db:
+        return db.execute("""SELECT (SELECT count(*) FROM mobile_gm_requests) AS requests,
+            COALESCE((SELECT reserved_requests FROM mobile_gm_budget),0) AS reserved,
+            COALESCE((SELECT reserved_micro_usd FROM mobile_gm_budget),0) AS micro_usd""").fetchone()
+
+
+@pytest.mark.parametrize("kind", ["proposal", "answer", "clarify"])
+def test_gm_public_context_only_readonly_result_and_exact_restart_retry(store, campaign, kind):
+    owner, packet, _ = campaign
+    enabled = Store(store.url, gm_policy=GM_POLICY)
+    with store.connect() as db:
+        row = db.execute("SELECT state FROM mobile_campaigns WHERE id=%s", (packet["id"],)).fetchone()
+        state = row["state"]
+        state["world"]["private_continuity"] = {"secret": "private-fixture-never-model"}
+        db.execute("UPDATE mobile_campaigns SET state=%s WHERE id=%s", (Jsonb(state), packet["id"]))
+    before = store.read(owner, packet["id"])
+    request, calls = gm_request(packet), []
+
+    def interpreter(public, prompt):
+        calls.append((deepcopy(public), prompt))
+        assert "private-fixture-never-model" not in json.dumps(public)
+        assert public == rules.view(state)
+        public["resources"]["silver"] = 99999  # Even a bad adapter cannot mutate a save.
+        return gm_result(kind)
+
+    saved = enabled.gm_request(owner, packet["id"], request, interpreter)
+    assert saved["status"] == "completed" and saved["expected_revision"] == 0
+    assert saved["result"]["choice_hash"] == (next(c["choice_hash"] for c in before["state"]["choices"] if c["id"] == "move_inside") if kind == "proposal" else None)
+    assert "usage" not in saved["result"]
+    assert store.read(owner, packet["id"]) == before
+    assert counts(store)["actions"] == 0
+    # Disabled mode still retrieves prior results; a retry never calls again.
+    assert Store(store.url).gm_request(owner, packet["id"], request, lambda *_: pytest.fail("second model call")) == saved
+    assert Store(store.url).gm_status(owner, packet["id"], request["request_id"]) == saved
+    assert len(calls) == 1
+    assert gm_counts(store) == {"requests": 1, "reserved": 1, "micro_usd": 23_700}
+
+
+def test_gm_disabled_foreign_stale_and_non_disposable_reject_before_reservation(store, campaign):
+    owner, packet, _ = campaign
+    request = gm_request(packet)
+    forbidden = lambda *_: pytest.fail("provider must not run")
+    with pytest.raises(Problem, match="not enabled") as error:
+        store.gm_request(owner, packet["id"], request, forbidden)
+    assert error.value.status == 503
+    enabled = Store(store.url, gm_policy=GM_POLICY)
+    stranger = store.new_session()["player_id"]
+    for call in (lambda: enabled.gm_request(stranger, packet["id"], request, forbidden),
+                 lambda: enabled.gm_status(stranger, packet["id"], request["request_id"])):
+        with pytest.raises(Problem) as error:
+            call()
+        assert error.value.status == 404
+    advanced = store.act(owner, packet["id"], action(packet))
+    with pytest.raises(Problem) as error:
+        enabled.gm_request(owner, packet["id"], request, forbidden)
+    assert error.value.code == "STALE_REVISION"
+    with store.connect() as db:
+        state = db.execute("SELECT state FROM mobile_campaigns WHERE id=%s", (packet["id"],)).fetchone()["state"]
+        state["disposable"] = False
+        db.execute("UPDATE mobile_campaigns SET state=%s WHERE id=%s", (Jsonb(state), packet["id"]))
+    with pytest.raises(Problem) as error:
+        enabled.gm_request(owner, packet["id"], gm_request(advanced), forbidden)
+    assert error.value.code == "GM_DISPOSABLE_ONLY"
+    assert gm_counts(store) == {"requests": 0, "reserved": 0, "micro_usd": 0}
+
+
+@pytest.mark.parametrize("change", [{"prompt": "different"}, {"expected_revision": 1}])
+def test_gm_changed_input_conflicts_even_after_completed_request(store, campaign, change):
+    owner, packet, _ = campaign
+    enabled = Store(store.url, gm_policy=GM_POLICY)
+    request = gm_request(packet)
+    saved = enabled.gm_request(owner, packet["id"], request, lambda *_: gm_result())
+    with pytest.raises(Problem) as error:
+        enabled.gm_request(owner, packet["id"], {**request, **change}, lambda *_: pytest.fail("reused ID called provider"))
+    assert error.value.code == "GM_REQUEST_ID_CONFLICT"
+    assert enabled.gm_status(owner, packet["id"], request["request_id"]) == saved
+
+
+@pytest.mark.parametrize("point,call_count", [("after_reservation", 0), ("after_provider", 1)])
+def test_gm_crash_reservation_expires_without_second_call_or_budget_reset(store, campaign, point, call_count):
+    owner, packet, _ = campaign
+    policy = {**GM_POLICY, "max_requests": 1}
+    enabled = Store(store.url, gm_policy=policy)
+    request, calls = gm_request(packet), []
+    class Crash(BaseException):
+        pass
+    def fault(phase):
+        if phase == point:
+            raise Crash()
+    def interpreter(*_):
+        calls.append(True)
+        return gm_result()
+    with pytest.raises(Crash):
+        enabled.gm_request(owner, packet["id"], request, interpreter, fault=fault)
+    restarted = Store(store.url, gm_policy=policy)
+    assert restarted.gm_request(owner, packet["id"], request, interpreter)["status"] == "prepared"
+    assert len(calls) == call_count
+    with store.connect() as db:
+        db.execute("UPDATE mobile_gm_requests SET expires_at=now()-interval '1 second'")
+    saved = restarted.gm_status(owner, packet["id"], request["request_id"])
+    assert saved["status"] == "unknown" and saved["result"] is None
+    assert restarted.gm_request(owner, packet["id"], request, interpreter) == saved
+    assert len(calls) == call_count
+    with pytest.raises(Problem) as error:
+        restarted.gm_request(owner, packet["id"], gm_request(packet), interpreter)
+    assert error.value.code == "GM_BUDGET_EXHAUSTED"
+    assert gm_counts(store) == {"requests": 1, "reserved": 1, "micro_usd": 23_700}
+    assert store.read(owner, packet["id"]) == packet
+
+
+@pytest.mark.parametrize("failure", ["billing", "configuration", "raw", "invalid_proposal", "nul_output", "invalid_unicode"])
+def test_gm_failures_are_safe_terminal_and_keep_reservation(store, campaign, failure):
+    from mobile_game.gm import GMError
+    owner, packet, _ = campaign
+    enabled = Store(store.url, gm_policy=GM_POLICY)
+    request, calls = gm_request(packet), []
+    def interpreter(*_):
+        calls.append(True)
+        if failure == "invalid_proposal":
+            return gm_result(choice_id="invent_money")
+        if failure in ("nul_output", "invalid_unicode"):
+            return {**gm_result("answer"), "message": "\x00" if failure == "nul_output" else "\ud800"}
+        if failure == "raw":
+            raise RuntimeError("secret-provider-body-do-not-expose")
+        error = GMError("GM_BILLING_UNAVAILABLE" if failure == "billing" else "GM_NOT_CONFIGURED",
+                        attempted=failure == "billing", usage={"input_tokens": 17})
+        error.message = "secret-provider-body-do-not-expose"
+        raise error
+    result = enabled.gm_request(owner, packet["id"], request, interpreter)
+    assert result["status"] == ("failed" if failure == "configuration" else "unknown")
+    assert result["result"] is None and "secret-provider-body" not in json.dumps(result)
+    if failure == "billing":
+        assert result["error"]["code"] == "GM_BILLING_UNAVAILABLE"
+        with store.connect() as db:
+            assert db.execute("SELECT usage FROM mobile_gm_requests").fetchone()["usage"]["input_tokens"] == 17
+    assert enabled.gm_request(owner, packet["id"], request, interpreter) == result
+    assert calls == [True] and gm_counts(store)["reserved"] == 1
+    assert store.read(owner, packet["id"]) == packet
+
+
+def test_gm_inflight_duplicate_does_not_block_gameplay_or_recall_provider(store, campaign):
+    owner, packet, _ = campaign
+    enabled = Store(store.url, gm_policy=GM_POLICY)
+    request, calls = gm_request(packet), []
+    started, release = threading.Event(), threading.Event()
+    def interpreter(*_):
+        calls.append(True); started.set()
+        assert release.wait(5)
+        return gm_result()
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        first = pool.submit(enabled.gm_request, owner, packet["id"], request, interpreter)
+        assert started.wait(3)
+        try:
+            duplicate = pool.submit(enabled.gm_request, owner, packet["id"], request, interpreter).result(timeout=2)
+            assert duplicate["status"] == "prepared"
+            with pytest.raises(Problem) as error:
+                enabled.gm_request(owner, packet["id"], {**request, "prompt": "Changed while pending"}, interpreter)
+            assert error.value.code == "GM_REQUEST_ID_CONFLICT"
+            # This needs the campaign row lock. It must commit while the model waits.
+            advanced = pool.submit(store.act, owner, packet["id"], action(packet)).result(timeout=2)
+            assert advanced["revision"] == 1
+        finally:
+            release.set()
+        saved = first.result(timeout=3)
+    assert saved["status"] == "completed" and saved["expected_revision"] == 0
+    assert calls == [True] and counts(store)["actions"] == 1
+    assert enabled.gm_request(owner, packet["id"], request, interpreter) == saved
+    assert store.read(owner, packet["id"])["revision"] == 1
+
+
+@pytest.mark.parametrize("limiting", ["requests", "credits"])
+def test_gm_global_lifetime_cap_across_owners_and_concurrent_workers(store, campaign, limiting):
+    owner, packet, _ = campaign
+    other = store.new_session()["player_id"]
+    other_packet = store.create(other, str(uuid.uuid4()))
+    policy = {**GM_POLICY, **({"max_requests": 1} if limiting == "requests" else {"budget_micro_usd": 23_700})}
+    barrier, calls = threading.Barrier(2), []
+    def submit(player, current):
+        barrier.wait()
+        try:
+            return Store(store.url, gm_policy=policy).gm_request(player, current["id"], gm_request(current),
+                                                               lambda *_: (calls.append(True), gm_result())[1])
+        except Problem as error:
+            return error.code
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(submit, owner, packet), pool.submit(submit, other, other_packet)]
+        results = [future.result(timeout=5) for future in futures]
+    assert sum(isinstance(result, dict) and result["status"] == "completed" for result in results) == 1
+    assert results.count("GM_BUDGET_EXHAUSTED") == 1 and calls == [True]
+    assert gm_counts(store) == {"requests": 1, "reserved": 1, "micro_usd": 23_700}
+
+
+@pytest.mark.parametrize("change", [{"prompt": "x" * 2001}, {"prompt": "\ud800"}, {"prompt": "x" + "\x01" * 1999},
+                                    {"prompt": " "}, {"prompt": "\x00"}, {"expected_revision": True}, {"unexpected": 1}])
+def test_gm_invalid_input_never_reserves_or_calls(store, campaign, change):
+    owner, packet, _ = campaign
+    enabled = Store(store.url, gm_policy=GM_POLICY)
+    with pytest.raises(Problem) as error:
+        enabled.gm_request(owner, packet["id"], {**gm_request(packet), **change}, lambda *_: pytest.fail("invalid input called provider"))
+    assert error.value.status == 422
+    assert gm_counts(store) == {"requests": 0, "reserved": 0, "micro_usd": 0}
+
+
+def test_gm_exact_prompt_limit_and_late_completion_cannot_reopen_expired_request(store, campaign):
+    from mobile_game.gm import MAX_PROMPT_CHARS
+    assert MAX_PROMPT_CHARS == 2000
+    owner, packet, _ = campaign
+    enabled = Store(store.url, gm_policy=GM_POLICY)
+    request, calls = gm_request(packet, "x" * MAX_PROMPT_CHARS), []
+    def interpreter(*_):
+        calls.append(True)
+        with store.connect() as db:
+            db.execute("UPDATE mobile_gm_requests SET expires_at=now()-interval '1 second'")
+        assert enabled.gm_status(owner, packet["id"], request["request_id"])["status"] == "unknown"
+        return gm_result()
+    result = enabled.gm_request(owner, packet["id"], request, interpreter)
+    assert result["status"] == "unknown" and result["result"] is None
+    assert enabled.gm_request(owner, packet["id"], request, interpreter) == result
+    assert calls == [True]
+    with store.connect() as db:
+        assert db.execute("SELECT result FROM mobile_gm_requests").fetchone()["result"] is None

@@ -15,12 +15,35 @@ STATIC = Path(__file__).parent / "static"
 COOKIE = "wt_mobile_session"
 
 
-def create_app(database_url=None, testing=False):
+def gm_policy():
+    """Paid calls require explicit bounded configuration, not just a key."""
+    if os.environ.get("WOT_GM_ENABLED") != "1":
+        return None
+    try:
+        maximum = int(os.environ["WOT_GM_MAX_REQUESTS"])
+        budget = int(os.environ["WOT_GM_BUDGET_MICRO_USD"])
+        if not 1 <= maximum <= 2**53-1 or not 1 <= budget <= 2**53-1:
+            return None
+        from .gm import configured, RESERVATION_MICRO_USD
+        if not configured() or budget < RESERVATION_MICRO_USD:
+            return None
+        return {"max_requests": maximum, "budget_micro_usd": budget,
+                "reservation_micro_usd": RESERVATION_MICRO_USD}
+    except (KeyError, ValueError, ImportError):
+        return None
+
+
+def create_app(database_url=None, testing=False, *, gm_interpreter=None):
     app = Flask(__name__, static_folder=None)
     app.config.update(TESTING=testing, MAX_CONTENT_LENGTH=16384)
-    store = Store(database_url or os.environ.get("DATABASE_URL"))
+    store = Store(database_url or os.environ.get("DATABASE_URL"), gm_policy=gm_policy())
     store.initialize()
     app.extensions["store"] = store
+    if gm_interpreter is None:
+        def gm_interpreter(public, prompt):
+            from .gm import interpret
+            return interpret(public, prompt)
+    app.extensions["gm_interpreter"] = gm_interpreter
     production = not testing and os.environ.get("WOT_LOCAL_DEV") != "1"
     public_origin = os.environ.get("PUBLIC_ORIGIN", "").rstrip("/")
 
@@ -128,8 +151,23 @@ def create_app(database_url=None, testing=False):
 
     @app.post("/api/campaigns")
     def create():
-        value = body({"request_id"})
-        return jsonify(store.create(g.identity["player_id"], value["request_id"]))
+        value = request.get_json()
+        if type(value) is not dict or set(value) not in ({"request_id"}, {"request_id", "episode_id"}):
+            raise Problem(422, "INVALID_REQUEST", "Select an available episode.")
+        return jsonify(store.create(g.identity["player_id"], value["request_id"], value.get("episode_id")))
+
+    @app.post("/api/campaigns/<campaign>/intent")
+    def typed_intent(campaign):
+        value = body({"expected_revision", "prompt"})
+        return jsonify(store.interpret_intent(g.identity["player_id"], campaign, value["expected_revision"], value["prompt"]))
+
+    @app.get("/api/campaigns/<campaign>/journal")
+    def journal(campaign):
+        try:
+            before = int(request.args.get("before", str(2**53-1)))
+        except ValueError:
+            raise Problem(422, "INVALID_JOURNAL_QUERY", "Invalid journal page.") from None
+        return jsonify(store.journal(g.identity["player_id"], campaign, before, request.args.get("q", "")))
 
     @app.get("/api/campaigns/<campaign>")
     def read(campaign):
@@ -139,6 +177,23 @@ def create_app(database_url=None, testing=False):
     def act(campaign):
         value = body({"action_id", "expected_revision", "choice_id", "choice_hash"})
         return jsonify(store.act(g.identity["player_id"], campaign, value))
+
+    def gm_reply(value):
+        response = jsonify(value)
+        if value["status"] == "prepared":
+            response.status_code = 202
+            response.headers["Retry-After"] = "1"
+        return response
+
+    @app.post("/api/campaigns/<campaign>/gm-requests")
+    def interpret_intent(campaign):
+        value = body({"request_id", "expected_revision", "prompt"})
+        return gm_reply(store.gm_request(g.identity["player_id"], campaign, value,
+                                        app.extensions["gm_interpreter"]))
+
+    @app.get("/api/campaigns/<campaign>/gm-requests/<request_id>")
+    def interpretation_status(campaign, request_id):
+        return gm_reply(store.gm_status(g.identity["player_id"], campaign, request_id))
 
     @app.get("/api/campaigns/<campaign>/export")
     def export(campaign):
@@ -150,7 +205,7 @@ def create_app(database_url=None, testing=False):
     @app.get("/health")
     def health():
         store.health()
-        return jsonify(status="ready", database="postgresql", release="mobile-disposable-pilot-v2", live_import=False)
+        return jsonify(status="ready", database="postgresql", release="mobile-disposable-pilot-v4", live_import=False)
 
     @app.get("/")
     def index():

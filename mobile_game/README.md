@@ -5,6 +5,44 @@ hosted web service and PostgreSQL. A player's desktop is not a runtime component
 It implements a small supported subset of `notion-manual-v2`; it is not a full
 freeform GM, a live-campaign importer, or the older `rules-v2` Python engine.
 
+## Playable authored adventure (v4)
+
+New stories default to **The Letter in the Gallery**, a separate original
+disposable adventure. The original garden rehearsal remains available, and
+existing saved campaigns retain their original episode and history.
+
+The gallery supports authored conversation, reliable observation, several
+methods, one disclosed uncertain check, a respected refusal and an actual
+ending. NPC memories, discoveries, practice evidence and twenty-minute theory
+blocks persist with the character. The tutor's teaching period ends on the
+saved clock; quiet time stops at that boundary and supervision does not persist
+indefinitely. Optional follow-up activities do not reopen the completed task.
+
+Supported typed intentions use a local, conservative interpreter with no model
+credential or API cost. Clear routine actions proceed through the same durable
+action system as buttons. Questions are read-only; risky actions show their
+complete stakes before a roll. Ambiguous inputs, different targets and unsupported
+methods do not silently become another action. This is **not general natural
+language understanding or an unrestricted AI GM**. The finite authored dialogue
+does not yet respond to arbitrary player speech.
+
+The new safe-casting module validates learned Spark and Air Hand, supervision,
+handling prerequisites, range, Air Hand's weight limit, existing load and held
+slots, and Strain limits before charging. It includes ordinary embrace and release
+of the specific brief working; no extra safe-practice roll is introduced. Combat,
+Healing, tying, circles, the complete curriculum and chapter advancement still
+require their own implementations and evaluations before live-campaign migration.
+
+The phone interface includes owner/campaign-specific unsent drafts and reading
+position, night reading, larger story text, a resume card, a character/weave
+reference, known people and memories, learning evidence, and a searchable paged
+journal. Private fields are excluded from the companion and journal projections.
+Drafts never submit themselves; a pending committed action retains its exact ID.
+
+The authored adventure works with the paid GM disabled. New paid requests to this
+episode are rejected before reserving budget; the older optional interpreter
+continues to support only the original garden rehearsal.
+
 ## Run
 
 Install `mobile_game/requirements.txt` in a Python 3.13 environment. Set
@@ -59,6 +97,54 @@ different database for browser preview. Tests cover dice bands, scene completion
 state preservation, immutable retry results, changed-input rejection, concurrent
 writers, transaction rollback, recovery codes, ownership and CSRF protection.
 
+## Bounded scene interpreter — offline integration
+
+The optional text box interprets a request about the disposable scene. It can
+explain the visible situation, ask for clarification, or propose one existing
+choice. It cannot resolve an action, roll dice, advance time, alter resources,
+invent a new ability, or run a live campaign. A proposal uses the normal action
+button and disclosed stakes; a risky action still requires confirmation.
+
+The feature is **disabled by default**. A key alone cannot enable paid calls.
+`WOT_GM_ENABLED=1`, `OPENAI_API_KEY`, positive `WOT_GM_MAX_REQUESTS`, and
+`WOT_GM_BUDGET_MICRO_USD` must all be configured by the server operator. The fixed
+model is `gpt-5.4-mini`; another `WOT_GM_MODEL` fails closed. Env files are not
+automatically loaded, and the browser never receives the credential. Keep this
+feature disabled until funded live testing is explicitly resumed.
+
+Each request reserves 23,700 micro-USD ($0.0237) before its single provider call.
+The conservative reservation uses the complete serialized request byte bound
+plus framing headroom (25,600 input tokens), 1,000 output tokens including
+reasoning, and documented prices of $0.75/M input and $4.50/M output. It is a
+local application allowance, not an OpenAI account-wide billing limit or a
+guarantee against future price changes. Recheck pricing before enabling the
+feature. The app sends no tools, uses `store=false`, and gives the provider only
+the explicit public scene projection. User requests are limited to 2,000
+characters; the complete API payload is capped at 24,576 bytes.
+
+The PostgreSQL allowance counts requests and reserved cost for the lifetime of
+this pilot across all users and worker restarts. Reservations are never refunded,
+including failed or uncertain calls. An old request ID always returns its saved
+status/result; it cannot charge again. Altering its input is rejected. The
+provider call holds no campaign transaction open and has a 14-second deadline
+with no automatic retries. An abandoned reservation becomes terminal after
+45 seconds. A timeout may still have incurred provider cost, so it stays counted.
+
+The phone retains the original owner, request ID, revision and prompt before
+submission. After an interrupted reply, recovery polls the saved request; it
+does not start another model call. Only an explicit retry after a confirmed
+missing request can resend the identical ID. Proposals are bound to their
+original revision and canonical choice hash, and are checked again before
+being offered to the ordinary action endpoint. Model replies themselves leave
+the campaign and its journal unchanged.
+
+`test_gm.py`, the store/HTTP integration tests, and `frontend_gm_probe.cjs` use
+synthetic responses with no paid calls. They verify error handling, hard limits,
+agency backstops, request recovery and state safety. **They do not establish live
+model response quality, live model latency, or complete manual-v2 gameplay.**
+API credit exhaustion currently prevents live evaluation. This offline work
+does not enable the feature on Railway or move a real character.
+
 ### Disposable backup rehearsal
 
 `tests_mobile/backup_probe.py` exercises real `pg_dump`/`pg_restore` against two
@@ -85,8 +171,10 @@ the redacted result to a new file; failures exit nonzero without printing SQL,
 subprocess error text, credentials, or campaign content.
 
 The rehearsal checks all mobile table rows and schema, full checkpoint/event
-continuity, unknown state fields, sessions, recovery, private dice seeds and
-exact action retries. The backup is created with mode 600 under `.runtime`;
+continuity, unknown state fields, sessions, recovery, private dice seeds,
+exact action retries, and completed/uncertain interpreter requests with their
+lifetime allowance. Restoring those requests must not recall the provider or
+reset spending limits. The backup is created with mode 600 under `.runtime`;
 keep it private and never publish it as a CI artifact. It contains security and
 gameplay state that the player-facing JSON export deliberately omits.
 

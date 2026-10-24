@@ -33,12 +33,14 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from mobile_game import rules
-from mobile_game.store import Store, digest
+from mobile_game.gm import RESERVATION_MICRO_USD
+from mobile_game.store import Store, Problem, digest
 
 
 SOURCE_DB = "mobile_pilot_backup_source"
 RESTORE_DB = "mobile_pilot_backup_restore"
-TABLES = ("mobile_players", "mobile_sessions", "mobile_campaigns", "mobile_actions", "mobile_rate_limits")
+TABLES = ("mobile_players", "mobile_sessions", "mobile_campaigns", "mobile_actions", "mobile_rate_limits",
+          "mobile_gm_budget", "mobile_gm_requests")
 
 
 class ProbeFailure(Exception):
@@ -147,7 +149,7 @@ def run(args, report):
             "explicit_disposable_database_names_required")
     require(args.host in ("127.0.0.1", "::1"), "only_literal_loopback_hosts_allowed")
     common = {"host": args.host, "hostaddr": args.host, "port": args.port, "user": args.user,
-              "connect_timeout": 10, "sslmode": "disable"}
+              "connect_timeout": 10, "sslmode": "disable", "options": "-c client_encoding=UTF8"}
     with psycopg.connect(make_conninfo(dbname="postgres", **common),
                          row_factory=dict_row, autocommit=True) as admin:
         address = admin.execute("SELECT host(inet_server_addr()) AS address").fetchone()["address"]
@@ -155,11 +157,13 @@ def run(args, report):
         existing = admin.execute("SELECT datname FROM pg_database WHERE datname = ANY(%s)",
                                  ([SOURCE_DB, RESTORE_DB],)).fetchall()
         require(not existing, "refusing_to_replace_existing_disposable_database")
-        admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(SOURCE_DB)))
-        admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(RESTORE_DB)))
+        admin.execute(sql.SQL("CREATE DATABASE {} TEMPLATE template0 ENCODING 'UTF8'").format(sql.Identifier(SOURCE_DB)))
+        admin.execute(sql.SQL("CREATE DATABASE {} TEMPLATE template0 ENCODING 'UTF8'").format(sql.Identifier(RESTORE_DB)))
     report["checks_passed"].append("new_local_disposable_source_and_restore_databases")
-    source = Store(make_conninfo(dbname=SOURCE_DB, **common))
-    restored = Store(make_conninfo(dbname=RESTORE_DB, **common))
+    policy = {"max_requests": 2, "budget_micro_usd": 2 * RESERVATION_MICRO_USD,
+              "reservation_micro_usd": RESERVATION_MICRO_USD}
+    source = Store(make_conninfo(dbname=SOURCE_DB, **common), gm_policy=policy)
+    restored = Store(make_conninfo(dbname=RESTORE_DB, **common), gm_policy=policy)
     source.initialize()
     credentials = source.new_session()
     identity = source.session(credentials["token"])
@@ -182,8 +186,37 @@ def run(args, report):
         packet = source.act(owner, packet["id"], request_for(packet, "covered_route"))
     packet = source.act(owner, packet["id"], request_for(packet, "quiet_interval"))
     require(packet["state"]["completed"], "fixture_episode_complete")
+    # Exercise completed and uncertain interpreter reservations using strictly
+    # local functions. No API key, network provider, or paid calls are involved.
+    def fixture_interpreter(public, prompt):
+        require("world" not in public and "private_fixture" not in public,
+                "interpreter_receives_public_projection_only")
+        return {"kind": "answer", "choice_id": None, "message": "The optional task is complete.",
+                "usage": {"input_tokens": 10, "output_tokens": 10, "total_tokens": 20}}
+    gm_completed_request = {"request_id": str(uuid.uuid4()), "expected_revision": packet["revision"],
+                            "prompt": "Is the optional task complete?"}
+    gm_completed = source.gm_request(owner, packet["id"], gm_completed_request, fixture_interpreter)
+    require(gm_completed["status"] == "completed", "completed_gm_fixture_saved")
+    gm_unknown_request = {**gm_completed_request, "request_id": str(uuid.uuid4())}
+    def crash_after_provider(point):
+        if point == "after_provider":
+            raise ProbeFailure("intentional_disposable_worker_crash")
+    try:
+        source.gm_request(owner, packet["id"], gm_unknown_request, fixture_interpreter, fault=crash_after_provider)
+    except ProbeFailure as exc:
+        require(str(exc) == "intentional_disposable_worker_crash", "expected_fixture_crash")
+    with source.connect() as connection:
+        connection.execute("UPDATE mobile_gm_requests SET expires_at=now()-interval '1 second' WHERE request_id=%s",
+                           (gm_unknown_request["request_id"],))
+    gm_unknown = source.gm_status(owner, packet["id"], gm_unknown_request["request_id"])
+    require(gm_unknown["status"] == "unknown", "uncertain_gm_fixture_is_terminal")
     checkpoint = source.read(owner, packet["id"])
     exported = source.export(owner, packet["id"])
+    adventure_packet = source.create(owner, str(uuid.uuid4()), "gallery-letter-v1")
+    for choice in ("look_gallery", "air_letter", "study_block"):
+        adventure_packet = source.act(owner, adventure_packet["id"], request_for(adventure_packet, choice))
+    require(adventure_packet["companion"]["last_cast"]["strain_paid"] == 1,
+            "adventure_fixture_has_channeling_and_learning")
     source.rate_limit("disposable-backup-fixture", 100, 60)
     # A second pre-existing session demonstrates all session rows survive.
     second_session = source.new_session(credentials["recovery_code"])
@@ -224,9 +257,23 @@ def run(args, report):
     report["restored_tables_sha256"] = hashlib.sha256(encoded(restored_snapshot)).hexdigest()
     report["checks_passed"].append("every_mobile_table_restored_exactly_including_private_seed_and_sessions")
     report["checks_passed"].append("table_columns_constraints_indexes_and_triggers_match")
+    def must_not_call(*args):
+        raise ProbeFailure("restored_request_must_not_recall_provider")
+    for original, expected in ((gm_completed_request, gm_completed), (gm_unknown_request, gm_unknown)):
+        require(restored.gm_request(owner, packet["id"], original, must_not_call) == expected,
+                "gm_result_and_terminal_uncertainty_survive_restore")
+    try:
+        restored.gm_request(owner, packet["id"], {**gm_completed_request, "request_id": str(uuid.uuid4())}, must_not_call)
+        raise ProbeFailure("restored_budget_must_remain_exhausted")
+    except Problem as exc:
+        require(exc.code == "GM_BUDGET_EXHAUSTED", "restored_budget_remains_exhausted")
+    report["checks_passed"].append("gm_responses_uncertain_requests_and_lifetime_spending_cap_restored_without_provider_calls")
     require(restored.session(credentials["token"]) == identity, "original_session_restored")
     require(restored.session(second_session["token"])["player_id"] == owner, "second_session_restored")
     require(restored.read(owner, packet["id"]) == checkpoint, "checkpoint_and_history_restored")
+    require(restored.read(owner, adventure_packet["id"]) == {k:v for k,v in adventure_packet.items() if k != "replayed"},
+            "adventure_character_relationships_learning_and_cast_receipt_restored")
+    report["checks_passed"].append("adventure_character_relationships_learning_and_cast_receipt_restored")
     replay = restored.act(owner, packet["id"], original_request)
     require(replay == {**original_response, "replayed": True}, "exact_original_roll_response_restored")
     require(restored.read(owner, packet["id"]) == checkpoint, "retry_keeps_latest_checkpoint")
