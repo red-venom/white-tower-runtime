@@ -144,7 +144,7 @@ def context(s):
   'known_places':[{'id':k,'name':p['name'],'description':p['description'],'exits':deepcopy(p['exits']),'provenance':p.get('provenance','disposable_fixture')} for k,p in locations.items()],
   'people':[{'id':k,**{f:p[f] for f in ('name','location','description','provenance')}} for k,p in box.get('people',{}).items() if p['location']==loc],
   'established_facts':[{'id':k,'text':f['text'],'provenance':f['provenance']} for k,f in box.get('facts',{}).items()],
-  'world_record_ids':{'objects':list(box['objects']),'people':list(box.get('people',{})),'facts':list(box.get('facts',{}))},
+  'world_record_ids':{'objects':list(box['objects']),'people':list(box.get('people',{}))},
   'character':{'name':s['identity']['name'],'rank':s['rank'],'attributes':{k:s['attributes'][k] for k in ('body','grace','wits','will','presence')},'skills':{k:s['skills'][k] for k in ('athletics','melee','marksmanship','stealth','survival','notice','scholarship','medicine','persuasion','insight','leadership','composure')},
     'known_weaves':list(s['channeling']['known_weaves']),'capacity':s['channeling']['current_capacity'],'control':s['channeling']['control'],'flows':{k:s['channeling']['flows'][k] for k in ('air','earth','fire','water','spirit')},
     'inventory':list(s['resources']['inventory'])},
