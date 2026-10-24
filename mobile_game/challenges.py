@@ -113,4 +113,16 @@ def resolve(state, target, dice=None):
  out['world']['sandbox'].setdefault('challenge_results',{})[target]={'scene_id':definition['scene_id'],'requires_roll':roll is not None,
   'outcome':outcome,'summary':branch['summary'],'goal':definition['goal'],'roll':roll,'elapsed_seconds':branch['seconds']}
  validate(out)
- return {'state':out,'narration':branch['summary'],'roll':roll,'elapsed_seconds':branch['seconds']}
+ from . import npc_activity
+ return {'state':out,'narration':branch['summary']+npc_activity.narration(state,out),'roll':roll,'elapsed_seconds':branch['seconds']}
+
+
+def preview_outcomes(state, outcomes):
+ from .sandbox import _advance
+ from . import npc_activity
+ results={}
+ for band,branch in outcomes.items():
+  probe=deepcopy(state)
+  _advance(probe,branch['seconds'],True)
+  results[band]={**deepcopy(branch),'npc_events':npc_activity.new_events(state,probe)}
+ return results

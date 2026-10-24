@@ -16,7 +16,7 @@ supervisor availability; clients cannot supply a fabricated permission or target
 
 This is a **disposable rules subset**, not the full Wheel of Time engine.
 The map and supervisor schedule are test fixtures, not canonical geography.
-Combat, Healing, opposed checks, NPC actions, curriculum progression,
+Combat, Healing, opposed checks, NPC combat/channeling, curriculum progression,
 advanced channeling and live character import remain unimplemented here.
 Existing authored samples and their saves remain available as regression fixtures.
 
@@ -112,7 +112,7 @@ PC speech/decisions, retcons, claims that unperformed checks succeeded, abilitie
 rewards or item effects. Text never grants mechanics: calling an NPC a supervisor
 does not enable casting, and describing a magical object grants no power. These
 are safe ordinary places/routes and props; hazards, access locks, economic items,
-NPC movement/actions and encounters need their own future mechanical operations.
+NPC conflict, hazardous interactions and encounters need their own future mechanical operations.
 The server enforces structure, append-only identities and mechanical isolation;
 it cannot establish the truth or lore accuracy of natural-language facts.
 
@@ -158,6 +158,57 @@ consistent with lore, that a declared setback changes the fiction, or that a
 costly result achieves useful progress. The limit is not an automatic victory.
 Combat, opposed checks, Medicine/Healing, progression and live-character imports
 remain separate work. No migration is performed by adding these operations.
+
+## NPC activity on the shared clock
+
+The storyteller can commit a public ordinary errand through the same tools:
+
+```json
+{"op":"npc_plan","id":"paper_delivery","actor":"sera",
+ "purpose":"Carry the paper parcel to the reading room.",
+ "steps":[{"op":"take","target":"parcel"},
+          {"op":"move","target":"library"},
+          {"op":"drop","target":"parcel"}]}
+```
+
+The actor, objects and every route must already exist. One to eight steps are
+validated as a complete sequence before scheduling. The server derives movement
+time from the saved route; pickup/drop each take ten seconds. An NPC has one
+active plan. Competing NPC reservations for the same prop are rejected; this
+adapter does not adjudicate conflicts. The 5 kg total carrying bound is an
+explicit limit of this ordinary-errand adapter, not a claim about canonical
+strength or a general NPC character sheet.
+
+Scheduling costs no fictional time. The actions settle at their recorded due
+seconds during later player actions, inside that action's existing PostgreSQL
+transaction. A ten-minute wait containing a 140-second delivery still costs ten
+minutes, not twelve minutes twenty seconds. Reads and real-world time never
+advance the game. Preview reports the background events each action would settle;
+uncertain checks preview them separately for each declared outcome without dice.
+
+Object custody uses a unique `person:<id>` location. A carried object follows its
+NPC, cannot also be in player inventory and cannot be picked up or targeted as
+unheld. During a move, the saved location denotes departure until arrival; inspect
+`activity` for the destination and due time. If the player takes a parcel before
+the NPC's pickup completes, the player's immediate pickup wins and the errand
+blocks. No item is taken from the player, duplicated or silently recreated.
+Preconditions are rechecked at each step; failure stops the remaining plan.
+
+`{"op":"cancel_npc_plan","target":"paper_delivery"}` finishes the current
+step, then stops. It does not teleport a travelling NPC, undo a pickup or erase
+prior events. A later genuinely new errand needs a new ID. Retry an uncertain
+response with the same action ID and request, as with all other operations.
+
+All plans are public, non-conflict background activity. They cannot act for the
+PC, spend player resources, grant permissions, cast, fight, conceal information,
+force a conversation or create an interaction requiring a new player decision.
+Those situations need distinct mechanics with interruptible time. The storyteller
+must not encode them as ordinary errands. `sandbox.known_people` reports public
+locations/activity, `sandbox.npc_plans` contains active and ten recent plans, and
+`sandbox.npc_events` contains twelve recent step results. Full results remain in
+the saved plans and complete action export. The mobile world panel shows recent
+NPC results and local custody/activity. Current capacity is 400 plans per
+sandbox; no existing live campaign or old checkpoint is migrated.
 
 ## Connected chapters: highest-leverage development pass
 

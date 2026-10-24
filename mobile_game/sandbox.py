@@ -1,7 +1,7 @@
 """Story-independent disposable world. Narrative is not an authority to mutate it."""
 from copy import deepcopy
 from .channeling import WEAVES, safe_cast
-from . import challenges
+from . import challenges, npc_activity
 
 EPISODE_ID='tower-sandbox-v1'
 PLACES={
@@ -34,13 +34,15 @@ def validate(s):
   raise ValueError('Only the disposable sandbox is supported.')
  box=s['world']['sandbox'];clock=s['clock'];locations=places(s)
  if box['location_id'] not in locations:raise ValueError('Unknown location.')
+ for person in box.get('people',{}).values():
+  if person['location'] not in locations:raise ValueError('Invalid NPC location.')
  if any(type(clock[k]) is not int or not 0<=clock[k]<=2**53-1 for k in ('fictional_seconds','day_activity_seconds')) or clock['day_activity_seconds']>28800:
   raise ValueError('Invalid clock.')
  c=s['channeling'];r=s['resources']
  for value,low,high in ((c['current_capacity'],1,10),(c['control'],1,4),(r['strain'],0,2*c['current_capacity']),(r['vitality'],0,r['max_vitality']),(r['wounds'],0,3)):
   if type(value) is not int or not low<=value<=high:raise ValueError('Invalid character boundary.')
  for obj in box['objects'].values():
-  if obj['location'] not in (*locations,'inventory'):raise ValueError('Invalid object location.')
+  if obj['location'] not in (*locations,'inventory',*(npc_activity.holder(k) for k in box.get('people',{}))):raise ValueError('Invalid object location.')
 
 
 def supervised(s,seconds=0):
@@ -55,6 +57,7 @@ def _advance(s,seconds,active=False):
  if start//86400!=s['clock']['fictional_seconds']//86400:
   s['clock']['day_activity_seconds']=s['clock']['fictional_seconds']%86400 if active else 0
  elif active:s['clock']['day_activity_seconds']+=seconds
+ npc_activity.settle(s,s['clock']['fictional_seconds'])
 
 
 def _choice(command,label,description,stakes):
@@ -100,9 +103,8 @@ def choices(s):
 
 def command_choice(s,command):
  if type(command) is not dict:raise ValueError('Supply a structured command.')
- if command.get('op')=='establish':
-  from .worldbuilding import choice
-  return choice(s,command)
+ from . import world_commands
+ if type(command.get('op')) is str and command['op'] in world_commands.OPS:return world_commands.choice(s,command)
  for c in choices(s):
   if c['command']==command:return c
  raise ValueError('Unsupported or unavailable command. Read the current world and available actions; do not substitute a different action.')
@@ -135,7 +137,7 @@ def resolve(s,choice_id,dice=None):
   elif op=='drop':obj['location']=box['location_id'];obj['elevated']=False;out['resources']['inventory'].remove(obj['name']);text='Put down '+obj['name']+' here.'
   else:obj['lit']=False;text='The practice candle is extinguished.'
  _advance(out,seconds,op not in ('wait','rest','release'));validate(out)
- return {'state':out,'narration':text,'roll':None,'elapsed_seconds':seconds}
+ return {'state':out,'narration':text+npc_activity.narration(s,out),'roll':None,'elapsed_seconds':seconds}
 
 
 def context(s):
@@ -146,7 +148,10 @@ def context(s):
   'exits':[{'target':k,'name':locations[k]['name'],'seconds':v} for k,v in locations[loc]['exits'].items()],
   'objects':[{'id':id,**{k:deepcopy(o[k]) for k in fields},'provenance':o.get('provenance','disposable_fixture')} for id,o in box['objects'].items() if o['location'] in (loc,'inventory')],
   'known_places':[{'id':k,'name':p['name'],'description':p['description'],'exits':deepcopy(p['exits']),'provenance':p.get('provenance','disposable_fixture')} for k,p in locations.items()],
-  'people':[{'id':k,**{f:p[f] for f in ('name','location','description','provenance')}} for k,p in box.get('people',{}).items() if p['location']==loc],
+  'people':[{'id':k,**{f:p[f] for f in ('name','location','description','provenance')},'activity':npc_activity.activity(s,k),'carrying':[{'id':oid,'name':o['name']} for oid,o in box['objects'].items() if o['location']==npc_activity.holder(k)]} for k,p in box.get('people',{}).items() if p['location']==loc],
+  'known_people':[{'id':k,'name':p['name'],'location':p['location'],'activity':npc_activity.activity(s,k)} for k,p in box.get('people',{}).items()],
+  'npc_plans':[{'id':id,'actor':p['actor'],'purpose':p['purpose'],'status':p['status'],'completed_steps':p['cursor'],'total_steps':len(p['steps']),'next_step':deepcopy(p['steps'][p['cursor']]) if p['status']=='pending' else None,'stopping':p['stop_after_current']} for id,p in box.get('npc_plans',{}).items() if p['status']=='pending' or id in list(box.get('npc_plans',{}))[-10:]],
+  'npc_events':npc_activity.events(s)[-12:],
   'established_facts':[{'id':k,'text':f['text'],'provenance':f['provenance']} for k,f in box.get('facts',{}).items()],
   'challenges':[deepcopy(d) for d in box.get('challenges',{}).values() if d['location']==loc and d['id'] not in box.get('challenge_results',{})],
   'challenge_results':[{'id':k,**deepcopy(r)} for k,r in box.get('challenge_results',{}).items()],
@@ -156,9 +161,10 @@ def context(s):
     'inventory':list(s['resources']['inventory'])},
   'last_cast':deepcopy(box['last_cast']),
   'limits':['Disposable fixture; room layout and daily supervisor schedule are sandbox fixtures, not canonical Tower geography.',
-   'No combat, Healing, opposed checks, NPC actions, curriculum progression or live-character import is implemented.',
+   'No combat, Healing, opposed checks, NPC combat or channeling, curriculum progression or live-character import is implemented.',
    'Public world preparation is additive and labelled campaign invention. Descriptions confer no abilities, supervision, rewards or completed player actions. Secret preparation and retcons are not supported.',
    'Mundane challenges use saved ratings and server 2d10, fixed consequences and at most three rolled checks per declared scene. Routine work uses no dice. The storyteller must judge uncertainty, source access and modifier relevance, preserve scene identity and honour completed goals; the engine cannot verify prose semantics.',
+   'Public NPC errands support movement along established routes and safe pickup/drop, carrying at most 5 kg of ordinary props. Plans resolve on fictional time, never wall time; no conflict, secrets, PC control or interaction requiring a player decision. In transit, location is the departure point until arrival; inspect activity. Player actions claim their immediate effects before background completion. Full journals retain every result.',
    'The storyteller supplies prose. Only committed engine actions change state. Unsupported actions must be reported, not invented.']}
 
 

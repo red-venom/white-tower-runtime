@@ -327,7 +327,7 @@ class Store:
                 raise Problem(409, "STALE_REVISION", "Another action has already been saved. Refresh before choosing again.")
             preparation = "command" in request
             if preparation:
-                from .worldbuilding import choice as world_choice, resolve as world_resolve
+                from .world_commands import choice as world_choice, resolve as world_resolve
                 try:
                     proposed = world_choice(row["state"], request["command"])
                     choices = {proposed['id']: proposed}
