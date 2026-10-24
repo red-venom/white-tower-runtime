@@ -1,9 +1,58 @@
-# White Tower mobile PostgreSQL pilot
+# White Tower sandbox and mobile client
 
-This is a separate, disposable, choice-driven episode. It runs entirely on the
-hosted web service and PostgreSQL. A player's desktop is not a runtime component.
-It implements a small supported subset of `notion-manual-v2`; it is not a full
-freeform GM, a live-campaign importer, or the older `rules-v2` Python engine.
+The user supplies the storyteller in ChatGPT. This project supplies the persistent
+world, validated rules, authoritative action receipts and phone interface. Further
+work prioritises the sandbox and tools rather than authored story chapters.
+No OpenAI API key or API credit is required by the sandbox runtime.
+
+## Sandbox foundation
+
+The new default sample is `tower-sandbox-v1`, independent of chapter scripts.
+Four fixture locations form a traversable graph. Objects retain their location,
+carried status and supported properties when you leave and return. Supported
+operations are travel, take/drop, wait, recovery, release, supervised Spark and
+Air Hand, and extinguishing the practice candle. The saved clock determines
+supervisor availability; clients cannot supply a fabricated permission or target.
+
+This is a **disposable rules subset**, not the full Wheel of Time engine.
+The map and supervisor schedule are test fixtures, not canonical geography.
+Combat, Healing, arbitrary checks, world-authoring tools, curriculum progression,
+advanced channeling and live character import remain unimplemented here.
+Existing authored samples and their saves remain available as regression fixtures.
+
+## Storyteller tool contract
+
+`mobile_game.sandbox_tools` is a transport-independent, MCP-shaped dispatcher.
+It receives the authenticated player identity from the transport; the model may
+never provide or override that identity. Its four tools are:
+
+- `sandbox_create(request_id)`: create a disposable sandbox; the same ID retries safely.
+- `sandbox_read(campaign_id)`: explicit player-visible world projection and available actions.
+- `sandbox_preview(campaign_id, action_id, expected_revision, command)`: validate one
+  structured command; return costs, effects and the exact commit request without mutation.
+- `sandbox_commit(campaign_id, request)`: use that request unchanged after the player
+  chooses the action. The existing PostgreSQL transaction checks revision and
+  stakes, persists one event, and returns an identical result for a repeated ID.
+
+Example command: `{"op":"cast","weave":"W02","target":"wooden_token"}`.
+Commands outside the current capabilities fail explicitly. Narration, extra keys,
+invented targets, ability overrides and caller-supplied supervision cannot write
+state. An uncertain reply must retry the original request, never reroll or invent
+success. The storyteller owns prose; only an engine receipt establishes an action.
+
+The deployed web adapter exposes `GET /api/sandbox/tools` and
+`POST /api/sandbox/tools/<tool_name>` using the existing owner session and CSRF
+protection. These are **not yet a ChatGPT-connectable MCP endpoint**. The published
+schemas mark reads/previews read-only and commits as idempotent writes.
+
+ChatGPT connection work still requires a standard Streamable HTTP MCP adapter and
+OAuth authorization tied to the same player identity. Cookie sessions or pasted
+recovery codes are not substitutes for that flow. No public unauthenticated
+campaign endpoint or shared master token is provided. See the official
+[OpenAI MCP authentication requirements](https://developers.openai.com/plugins/build/auth)
+and [MCP server guide](https://developers.openai.com/plugins/build/mcp-server).
+A live ChatGPT tool-call test remains outstanding; dispatcher tests do not establish
+that the ChatGPT connection is working.
 
 ## Connected chapters: highest-leverage development pass
 
@@ -237,8 +286,8 @@ adjudication. No HTTP import route or database activation is provided.
 No Aveline or other live campaign import endpoint exists. Before adding one:
 
 1. Prove the deployed phone workflow, restart recovery and backup restoration.
-2. Implement and evaluate the desired freeform GM with an authenticated model
-   service and an explicit hosting/model cost configuration.
+2. Connect and evaluate the user-supplied ChatGPT storyteller through the
+   authenticated MCP adapter, including action previews and authoritative receipts.
 3. Map all current manual rules, character fields, history, original dice policy
    and private continuity data without resetting or reconstructing a character.
 4. Rehearse the migration using a disposable copy and compare complete states.

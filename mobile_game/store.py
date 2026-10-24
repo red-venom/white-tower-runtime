@@ -220,14 +220,18 @@ class Store:
                    "created_at": t["created_at"].isoformat()} for t in reversed(turns)]
         public = rules.view(row["state"])
         public["choices"] = [{**c, "choice_hash": digest(c)} for c in public["choices"]]
-        from . import adventure
+        from . import adventure, sandbox
+        is_sandbox = public["episode_id"] == sandbox.EPISODE_ID
         authored = public["episode_id"] == adventure.EPISODE_ID
-        return {"id": str(row["id"]), "revision": row["revision"], "head": row["head"],
+        packet = {"id": str(row["id"]), "revision": row["revision"], "head": row["head"],
                 "state": public, "events": events,
                 "companion": adventure.companion(row["state"]) if authored else None,
                 "disposable": True, "capabilities": {"freeform": False, "import_live_campaign": False,
                                                       "typed_intents": authored,
-                                                      "gm_assistant": self.gm_policy is not None and not authored}}
+                                                      "gm_assistant": self.gm_policy is not None and not authored and not is_sandbox}}
+        if is_sandbox:
+            packet["sandbox"] = sandbox.context(row["state"])
+        return packet
 
     def interpret_intent(self, player, campaign, expected_revision, prompt):
         from . import adventure

@@ -145,6 +145,16 @@ def create_app(database_url=None, testing=False, *, gm_interpreter=None):
         body(set())
         return jsonify(recovery_code=store.rotate_recovery(g.identity["player_id"]))
 
+    @app.get("/api/sandbox/tools")
+    def sandbox_tool_definitions():
+        from .sandbox_tools import TOOLS
+        return jsonify(tools=TOOLS, transport="authenticated-web-adapter", chatgpt_connection_ready=False)
+
+    @app.post("/api/sandbox/tools/<name>")
+    def sandbox_tool_call(name):
+        from .sandbox_tools import call
+        return jsonify(call(store, g.identity["player_id"], name, request.get_json()))
+
     @app.get("/api/campaigns")
     def campaigns():
         return jsonify(campaigns=store.campaigns(g.identity["player_id"]))

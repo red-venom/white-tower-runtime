@@ -223,6 +223,9 @@ def run(args, report):
     source.notes(owner, adventure_packet["id"], (0, "Disposable notebook: remember the completed lesson."))
     for choice in ("next_chapter", "garden_listen", "garden_welcome", "garden_finish"):
         adventure_packet = source.act(owner, adventure_packet["id"], request_for(adventure_packet, choice))
+    sandbox_packet = source.create(owner, str(uuid.uuid4()), "tower-sandbox-v1")
+    for choice in ("cast:W02:wooden_token", "travel:garden", "drop:wooden_token"):
+        sandbox_packet = source.act(owner, sandbox_packet["id"], request_for(sandbox_packet, choice))
     source_snapshot = snapshot(source, SOURCE_DB)
     require(all(source_snapshot[table] for table in TABLES), "all_mobile_tables_populated")
     report["checks_passed"].append("full_disposable_fixture_with_private_seed_and_sessions")
@@ -279,6 +282,8 @@ def run(args, report):
     report["checks_passed"].append("adventure_character_relationships_learning_and_cast_receipt_restored")
     require(restored.notes(owner, adventure_packet["id"]) == source.notes(owner, adventure_packet["id"]), "personal_notebook_restored")
     report["checks_passed"].append("personal_notebook_restored")
+    require(restored.read(owner, sandbox_packet["id"]) == {k:v for k,v in sandbox_packet.items() if k!="replayed"}, "persistent_sandbox_objects_and_actions_restored")
+    report["checks_passed"].append("persistent_sandbox_objects_and_actions_restored")
     replay = restored.act(owner, packet["id"], original_request)
     require(replay == {**original_response, "replayed": True}, "exact_original_roll_response_restored")
     require(restored.read(owner, packet["id"]) == checkpoint, "retry_keeps_latest_checkpoint")

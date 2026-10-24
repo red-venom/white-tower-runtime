@@ -5,11 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#f4efe5">
   <meta name="color-scheme" content="light">
-  <title>White Tower · Stories</title>
+  <title>White Tower · Sandbox</title>
   <link rel="stylesheet" href="/assets/styles.css">
   <script defer src="/assets/app.js"></script>
   <script defer src="/assets/experience.js"></script>
   <script defer src="/assets/notes.js"></script>
+  <script defer src="/assets/sandbox.js"></script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to the story</a>
@@ -18,7 +19,7 @@
       <svg class="tower-mark" viewBox="0 0 32 40" aria-hidden="true"><path d="M6 37h20M9 35l3-26h8l3 26M11 9l5-6 5 6M14 18h4M13 26h6M16 32v5"/></svg>
       <span>White Tower<span class="wordmark-sub">A story carried with you</span></span>
     </a>
-    <span class="pilot-badge">Tower stories</span>
+    <span class="pilot-badge">World &amp; rules</span>
   </header>
 
   <main id="main" class="page-shell" tabindex="-1">
@@ -35,10 +36,10 @@
     <section id="welcome" class="welcome" hidden>
       <div class="welcome-ornament" aria-hidden="true">✧</div>
       <p class="eyebrow">An original White Tower adventure</p>
-      <h1>A little courage.<br>A story of your own.</h1>
-      <p class="welcome-copy">A letter from home. A lesson in restraint. A choice that belongs to you. Step into the Tower with a disposable character, and return whenever you have a moment.</p>
-      <label class="episode-label" for="episode-select">Choose your story</label><select id="episode-select"><option value="gallery-letter-v1">The Letter in the Gallery · conversation &amp; channeling</option><option value="courtyard-cover-disposable-v1">A Shower in the Gardens · original short rehearsal</option></select>
-      <button id="start-campaign" class="button button-primary">Begin a sample story <span aria-hidden="true">→</span></button>
+      <h1>Your character.<br>Your storyteller.</h1>
+      <p class="welcome-copy">Use the sandbox to explore places, handle objects and practise known forms. The world keeps the state; your storyteller supplies the adventure. Existing authored samples remain available.</p>
+      <label class="episode-label" for="episode-select">Choose your story</label><select id="episode-select"><option value="tower-sandbox-v1">Open sandbox · world and rules, no assigned story</option><option value="gallery-letter-v1">The Letter in the Gallery · conversation &amp; channeling</option><option value="courtyard-cover-disposable-v1">A Shower in the Gardens · original short rehearsal</option></select>
+      <button id="start-campaign" class="button button-primary">Begin with a sample character <span aria-hidden="true">→</span></button>
       <p class="quiet-copy">Sample characters only. Aveline’s campaign is untouched.</p>
       <div class="welcome-notes"><div><span aria-hidden="true">01</span><strong>Choose your approach</strong><p>See the stakes before taking a risk.</p></div><div><span aria-hidden="true">02</span><strong>Leave and return</strong><p>Your desktop can stay switched off.</p></div><div><span aria-hidden="true">03</span><strong>Reach an ending</strong><p>A complete scene, with time to breathe.</p></div></div>
     </section>
@@ -72,6 +73,7 @@
         <div id="gm-response" class="gm-response" role="status" hidden><p id="gm-status" class="gm-status"></p><div id="gm-message" class="gm-message"></div><p id="gm-response-note" class="quiet-copy"></p><div class="button-row"><button id="gm-proposal" class="button button-primary" hidden></button><button id="gm-retry" class="button button-secondary" hidden>Check this request</button><button id="gm-new" class="text-button" hidden>Ask another question</button><button id="gm-dismiss" class="text-button" hidden>Close response</button></div></div>
       </section>
 
+      <section id="sandbox-panel" class="companion" hidden aria-label="World state"><p class="eyebrow">World state</p><p id="sandbox-supervision"></p><details><summary>Objects &amp; belongings</summary><div id="sandbox-objects"></div></details><details><summary>Your character</summary><div id="sandbox-character"></div></details><details><summary>Sandbox coverage</summary><div id="sandbox-limits"></div></details></section>
       <section id="choices-section" class="choices-section" aria-labelledby="choices-heading"><div class="section-heading"><h2 id="choices-heading">What do you do?</h2><span>Choose an approach</span></div><div id="choices" class="choices"></div></section>
       <section id="ending" class="ending" hidden><span aria-hidden="true">✧</span><h2>This chapter is complete.</h2><p>Your choices and ending are saved. Choose a connected chapter when available, enjoy the remaining quiet time, or return later.</p></section>
       <section id="companion" class="companion" hidden aria-label="Your campaign notebook"><p class="eyebrow">Your notebook</p><details><summary>Your chapters</summary><div id="chapter-sheet"></div></details><details><summary>Character &amp; the One Power</summary><div id="character-sheet"></div></details><details><summary>People you know</summary><div id="people-sheet"></div></details><details><summary>Discoveries &amp; learning</summary><div id="learning-sheet"></div></details><details><summary>About this world</summary><div id="lore-sheet"></div></details></section>
@@ -85,7 +87,7 @@
     <details id="restore-details" class="restore-details"><summary>Recovery and another browser</summary><form id="restore-form"><label for="restore-code">Your recovery code</label><input id="restore-code" name="recovery_code" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste your saved code" required><button id="restore-button" class="button button-secondary" type="submit">Restore my stories</button><p class="quiet-copy">Use the code from your original browser. Keep it private.</p></form>
       <div class="replace-recovery"><p class="quiet-copy">Already connected, but haven’t kept your code?</p><button id="new-recovery-code" class="text-button" aria-expanded="false" aria-controls="replace-recovery-confirmation">Create a new recovery code</button><div id="replace-recovery-confirmation" class="replace-recovery-confirmation" hidden><p>The new code will replace your previous one. Your old code will stop working; this browser will stay connected.</p><div class="button-row"><button id="confirm-recovery-code" class="button button-secondary">Replace code</button><button id="cancel-recovery-code" class="text-button">Cancel</button></div></div></div>
     </details>
-    <footer class="site-footer"><p>Original authored adventures · Your decisions, faithfully kept.<br>Disposable characters only. Full campaign migration is not enabled.</p><p>Online connection required · Progress saved in the cloud</p></footer>
+    <footer class="site-footer"><p>Persistent world · Your decisions, faithfully kept.<br>Disposable characters only. Full campaign migration is not enabled.</p><p>Online connection required · Progress saved in the cloud</p></footer>
   </main>
 
   <dialog id="risk-dialog" aria-labelledby="risk-title"><form method="dialog"><p class="eyebrow">Before you choose</p><h2 id="risk-title"></h2><p id="risk-description"></p><div class="stakes-box"><strong>At stake</strong><p id="risk-stakes"></p></div><p class="quiet-copy">This approach includes a roll. The result will be saved with your choice.</p><div class="dialog-actions"><button value="cancel" class="button button-secondary">Go back</button><button id="confirm-risk" value="confirm" class="button button-primary">Take this approach</button></div></form></dialog>

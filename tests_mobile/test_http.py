@@ -537,3 +537,36 @@ def test_connected_chapter_keeps_campaign_notes_history_and_recovery(app):
     exported=fresh.get(base+'/export').get_json()
     assert len(exported['events'])==5 and exported['state']['world']['episode']['result']=='declined'
     assert exported['sha256']==digest({k:v for k,v in exported.items() if k!='sha256'})
+
+
+def test_sandbox_tools_preview_commit_replay_ownership_and_resume(app):
+    client=app.test_client();_,headers,cred=start(client)
+    def call(name,args,code=200):
+        response=client.post('/api/sandbox/tools/'+name,json=args,headers=headers)
+        assert response.status_code==code,response.get_json()
+        return response.get_json()
+    specs=client.get('/api/sandbox/tools').get_json()
+    assert not specs['chatgpt_connection_ready'] and len(specs['tools'])==4
+    packet=call('sandbox_create',{'request_id':str(uuid.uuid4())});id=packet['id'];base=f'/api/campaigns/{id}'
+    original=json.loads(json.dumps(packet))
+    args={'campaign_id':id,'expected_revision':0,'action_id':str(uuid.uuid4()),'command':{'op':'cast','weave':'W02','target':'wooden_token'}}
+    preview=call('sandbox_preview',args)
+    assert preview['effects']['resources_after']['strain']==1 and not preview['committed']
+    assert call('sandbox_read',{'campaign_id':id})==original
+    bad={**preview['request'],'choice_hash':'forged'}
+    call('sandbox_commit',{'campaign_id':id,'request':bad},409)
+    committed=call('sandbox_commit',{'campaign_id':id,'request':preview['request']})
+    assert committed['revision']==1 and committed['state']['resources']['strain']==1
+    assert call('sandbox_commit',{'campaign_id':id,'request':preview['request']})=={**committed,'replayed':True}
+    call('sandbox_preview',args,409)
+    call('sandbox_read',{'campaign_id':id,'player_id':'forged'},422)
+    call('sandbox_preview',{**args,'expected_revision':1,'command':{'op':'cast','weave':'W02','target':'invented','supervised':True}},422)
+    fresh=app.test_client();fresh.post('/api/session/recover',json={'recovery_code':cred['recovery_code']})
+    assert fresh.get(base).get_json()=={k:v for k,v in committed.items() if k!='replayed'}
+    foreign=app.test_client();_,other_headers,_=start(foreign)
+    assert foreign.post('/api/sandbox/tools/sandbox_read',json={'campaign_id':id},headers=other_headers).status_code==404
+    assert client.post('/api/sandbox/tools/sandbox_read',json={'campaign_id':id}).status_code==403
+    assert app.test_client().get('/api/sandbox/tools').status_code==401
+    exported=client.get(base+'/export').get_json()
+    assert exported['state']['world']['sandbox']['objects']['wooden_token']['location']=='inventory'
+    assert exported['sha256']==digest({k:v for k,v in exported.items() if k!='sha256'})
