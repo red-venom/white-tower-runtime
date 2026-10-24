@@ -3,19 +3,10 @@
 These records are campaign inventions, not verified canon or mechanical grants.
 No general JSON patch, character editing, hidden information, or retcon endpoint.
 """
-import re
 from copy import deepcopy
 
-ID = {'type': 'string', 'pattern': '^[a-z][a-z0-9_]{0,31}$'}
-TEXT = {'type': 'string', 'minLength': 1, 'maxLength': 1000}
-NAME = {'type': 'string', 'minLength': 1, 'maxLength': 100}
-
-
-def variant(kind, fields):
-    properties = {'kind': {'const': kind}, **fields}
-    return {'type': 'object', 'properties': properties,
-            'required': list(properties), 'additionalProperties': False}
-
+from .world_schema import ID, TEXT, NAME, variant, _text, _id
+from . import challenges
 
 CHANGE = {'anyOf': [
     variant('place', {'id': ID, 'name': NAME, 'description': TEXT}),
@@ -24,21 +15,9 @@ CHANGE = {'anyOf': [
                       'weight_kg': {'type': 'number', 'exclusiveMinimum': 0, 'maximum': 5}}),
     variant('person', {'id': ID, 'name': NAME, 'location': ID, 'description': TEXT}),
     variant('fact', {'id': ID, 'text': TEXT}),
+    challenges.DEFINITION,
 ]}
 CHANGES = {'type': 'array', 'minItems': 1, 'maxItems': 12, 'items': CHANGE}
-
-
-def _text(value, maximum=1000):
-    if (type(value) is not str or not 1 <= len(value) <= maximum or value != value.strip()
-            or any(ord(c) < 32 and c not in '\n\t' for c in value)):
-        raise ValueError('Use nonempty bounded text without control characters or surrounding spaces.')
-    try: value.encode('utf-8')
-    except UnicodeError: raise ValueError('Text must be valid Unicode.') from None
-
-
-def _id(value):
-    if type(value) is not str or not re.fullmatch('[a-z][a-z0-9_]{0,31}', value):
-        raise ValueError('Use a stable lowercase identifier of at most 32 characters.')
 
 
 def resolve(state, command):
@@ -54,6 +33,7 @@ def resolve(state, command):
     places = box.setdefault('places', deepcopy(sandbox.PLACES))
     people = box.setdefault('people', {})
     facts = box.setdefault('facts', {})
+    checks = box.setdefault('challenges', {})
     labels = []
     for change in changes:
         if type(change) is not dict:
@@ -61,7 +41,7 @@ def resolve(state, command):
         kind = change.get('kind')
         schema = next((s for s in CHANGE['anyOf'] if s['properties']['kind']['const'] == kind), None)
         if schema is None or set(change) != set(schema['required']):
-            raise ValueError('Use the exact schema for a place, route, object, person or fact.')
+            raise ValueError('Use the exact schema for a place, route, object, person, fact or challenge.')
         for key in ('id', 'location', 'from', 'to'):
             if key in change: _id(change[key])
         for key in ('name', 'description', 'text'):
@@ -79,13 +59,13 @@ def resolve(state, command):
             labels.append('route '+a+' ↔ '+b)
             continue
         id = change['id']
-        if id == 'inventory' or any(id in records for records in (places, box['objects'], people, facts)):
+        if id == 'inventory' or any(id in records for records in (places, box['objects'], people, facts, checks)):
             raise ValueError('That identifier is already established or reserved; do not overwrite it.')
         if 'location' in change and change['location'] not in places:
             raise ValueError('Place new objects and people in an established location, never directly in inventory.')
         if 'name' in change:
             names = [state['identity']['name'], *state['resources']['inventory']]
-            names += [record['name'] for records in (places, box['objects'], people) for record in records.values()]
+            names += [record['name'] for records in (places, box['objects'], people, checks) for record in records.values()]
             if change['name'].casefold() in {n.casefold() for n in names}:
                 raise ValueError('Use a distinct name; existing character and object identities must be preserved.')
         provenance = {'provenance': 'campaign_invention'}
@@ -99,10 +79,13 @@ def resolve(state, command):
                 'weight_kg': weight, 'elevated': False, 'lit': False, 'dry_fuel': False, **provenance}
         elif kind == 'person':
             people[id] = {k: change[k] for k in ('name', 'location', 'description')} | provenance
+        elif kind == 'challenge':
+            challenges.validate_definition(out, change)
+            checks[id] = deepcopy(change) | provenance
         else:
             facts[id] = {'text': change['text'], **provenance}
         labels.append(kind+' '+id)
-    if len(places) > 100 or len(box['objects']) > 200 or len(people) > 100 or len(facts) > 300:
+    if len(places) > 100 or len(box['objects']) > 200 or len(people) > 100 or len(facts) > 300 or len(checks) > 200:
         raise ValueError('This sandbox has reached its world-record capacity.')
     sandbox.validate(out)
     return {'state': out, 'narration': 'Established public campaign records: '+', '.join(labels)+'. No time or character resources changed.',

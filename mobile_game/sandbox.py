@@ -1,6 +1,7 @@
 """Story-independent disposable world. Narrative is not an authority to mutate it."""
 from copy import deepcopy
 from .channeling import WEAVES, safe_cast
+from . import challenges
 
 EPISODE_ID='tower-sandbox-v1'
 PLACES={
@@ -93,6 +94,7 @@ def choices(s):
    except ValueError:continue
    effect='Light the practice candle.' if weave=='W01' else 'Bring the practice object into your hand.'
    add({'op':'cast','weave':weave,'target':id},WEAVES[weave]['name']+': '+obj['name'],effect+' The supervisor, target and limits come from saved world state.',receipt['elapsed_seconds'],True,'1 Strain. No roll; the working is released after use.')
+ out.extend(challenges.choices(s))
  return out
 
 
@@ -107,10 +109,12 @@ def command_choice(s,command):
 
 
 def resolve(s,choice_id,dice=None):
- if dice not in (None,[]):raise ValueError('These sandbox operations do not require dice.')
  available={c['id']:c for c in choices(s)}
  if choice_id not in available:raise ValueError('Action is unavailable in this world state.')
- c=available[choice_id]['command'];op=c['op'];out=deepcopy(s);box=out['world']['sandbox'];seconds=10;receipt=None
+ c=available[choice_id]['command'];op=c['op']
+ if op=='attempt':return challenges.resolve(s,c['target'],dice)
+ if dice not in (None,[]):raise ValueError('These sandbox operations do not require dice.')
+ out=deepcopy(s);box=out['world']['sandbox'];seconds=10;receipt=None
  if op=='travel':
   locations=places(out);seconds=locations[box['location_id']]['exits'][c['target']];box['location_id']=c['target'];out['world']['location']=locations[c['target']]['name']
   text='Arrived at '+out['world']['location']+'.'
@@ -144,14 +148,17 @@ def context(s):
   'known_places':[{'id':k,'name':p['name'],'description':p['description'],'exits':deepcopy(p['exits']),'provenance':p.get('provenance','disposable_fixture')} for k,p in locations.items()],
   'people':[{'id':k,**{f:p[f] for f in ('name','location','description','provenance')}} for k,p in box.get('people',{}).items() if p['location']==loc],
   'established_facts':[{'id':k,'text':f['text'],'provenance':f['provenance']} for k,f in box.get('facts',{}).items()],
+  'challenges':[deepcopy(d) for d in box.get('challenges',{}).values() if d['location']==loc and d['id'] not in box.get('challenge_results',{})],
+  'challenge_results':[{'id':k,**deepcopy(r)} for k,r in box.get('challenge_results',{}).items()],
   'world_record_ids':{'objects':list(box['objects']),'people':list(box.get('people',{}))},
   'character':{'name':s['identity']['name'],'rank':s['rank'],'attributes':{k:s['attributes'][k] for k in ('body','grace','wits','will','presence')},'skills':{k:s['skills'][k] for k in ('athletics','melee','marksmanship','stealth','survival','notice','scholarship','medicine','persuasion','insight','leadership','composure')},
     'known_weaves':list(s['channeling']['known_weaves']),'capacity':s['channeling']['current_capacity'],'control':s['channeling']['control'],'flows':{k:s['channeling']['flows'][k] for k in ('air','earth','fire','water','spirit')},
     'inventory':list(s['resources']['inventory'])},
   'last_cast':deepcopy(box['last_cast']),
   'limits':['Disposable fixture; room layout and daily supervisor schedule are sandbox fixtures, not canonical Tower geography.',
-   'No combat, Healing, general social checks, NPC actions, curriculum progression or live-character import is implemented.',
+   'No combat, Healing, opposed checks, NPC actions, curriculum progression or live-character import is implemented.',
    'Public world preparation is additive and labelled campaign invention. Descriptions confer no abilities, supervision, rewards or completed player actions. Secret preparation and retcons are not supported.',
+   'Mundane challenges use saved ratings and server 2d10, fixed consequences and at most three rolled checks per declared scene. Routine work uses no dice. The storyteller must judge uncertainty, source access and modifier relevance, preserve scene identity and honour completed goals; the engine cannot verify prose semantics.',
    'The storyteller supplies prose. Only committed engine actions change state. Unsupported actions must be reported, not invented.']}
 
 

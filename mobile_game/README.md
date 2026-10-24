@@ -11,12 +11,12 @@ The new default sample is `tower-sandbox-v1`, independent of chapter scripts.
 Four fixture locations form a traversable graph. Objects retain their location,
 carried status and supported properties when you leave and return. Supported
 operations are travel, take/drop, wait, recovery, release, supervised Spark and
-Air Hand, and extinguishing the practice candle. The saved clock determines
+Air Hand, extinguishing the practice candle, and declared mundane challenges. The saved clock determines
 supervisor availability; clients cannot supply a fabricated permission or target.
 
 This is a **disposable rules subset**, not the full Wheel of Time engine.
 The map and supervisor schedule are test fixtures, not canonical geography.
-Combat, Healing, arbitrary checks, NPC actions, curriculum progression,
+Combat, Healing, opposed checks, NPC actions, curriculum progression,
 advanced channeling and live character import remain unimplemented here.
 Existing authored samples and their saves remain available as regression fixtures.
 
@@ -118,9 +118,46 @@ it cannot establish the truth or lore accuracy of natural-language facts.
 
 Old saves keep their original fixture graph until a preparation is committed.
 Existing saves and Aveline are not migrated by this feature. Current bounds are
-100 places, 200 objects, 100 people and 300 public facts per disposable sandbox;
+100 places, 200 objects, 100 people, 300 public facts and 200 challenges per disposable sandbox;
 the HTTP body limit remains 16 KiB. Broader campaign mechanics and native phone
 verification remain required before live-character migration.
+
+## Reusable mundane challenges
+
+`establish` also accepts immutable public `challenge` records. The schema declares
+a stable ID and scene ID, location, goal, method, uncertainty, alternative,
+Attribute, supported mundane Skill, difficulty, help/obstacle fact references and
+all three outcomes (`clean`, `costly`, `setback`). Each outcome specifies a summary,
+10–3600 seconds, 0–6 Supply cost and 0–100 silver cost. See
+`tests_mobile/test_challenges.py` for a complete disposable example. No arbitrary
+patch, reward, injury, ability grant, channeling or combat operation is accepted.
+
+Attempt a saved challenge with `{"op":"attempt","target":"challenge_id"}`.
+The normal preview returns the exact saved ratings, single +2/−2 situational
+modifier, achievable totals, difficulty, bands and declared consequences. It
+never generates dice. Commit generates server 2d10 using the existing unbiased,
+action-bound generator and writes one result plus its costs atomically. Totals at
+least the difficulty are clean; 1–3 below are costly; 4+ below are setbacks.
+A null difficulty means safe routine work with identical outcome branches and no
+roll. Normal, hard and exceptional difficulties are 14, 18 and 22. These numbers
+implement the agreed `notion-manual-v2` house rules, not novel canon.
+
+All possible costs and durations must be affordable before the attempt is offered.
+A challenge resolves once; the same scene/location/goal/method cannot be inserted
+under another ID. At most three rolled checks can resolve per declared scene;
+routine work does not consume that allowance. Existing identities and definitions
+cannot be overwritten. Failed requests roll back; identical committed retries
+return the original dice/result without paying again. Results persist in
+`sandbox.challenge_results`, the mobile world panel and the complete export.
+
+The storyteller still must judge fictional uncertainty, alternative methods,
+source access and modifier relevance. It must honour completed goals, keep scene
+identity stable and never paraphrase an unchanged test to bypass the cap. The
+engine checks structure and arithmetic; it cannot prove that outcome prose is
+consistent with lore, that a declared setback changes the fiction, or that a
+costly result achieves useful progress. The limit is not an automatic victory.
+Combat, opposed checks, Medicine/Healing, progression and live-character imports
+remain separate work. No migration is performed by adding these operations.
 
 ## Connected chapters: highest-leverage development pass
 

@@ -11,6 +11,7 @@
   const records=$('sandbox-records');records.replaceChildren();
   (world.people||[]).forEach(p=>line(records,`${p.name} · ${p.description}`));
   (world.established_facts||[]).forEach(f=>line(records,f.text));
+  (world.challenge_results||[]).forEach(r=>line(records,`${r.goal} · ${r.outcome}: ${r.summary}`));
   if(!records.childElementCount)line(records,'No people or additional facts have been established here.');
   line(records,'These are public campaign records. Descriptions do not grant abilities or resolve actions.');
   const places=$('sandbox-places');places.replaceChildren();
