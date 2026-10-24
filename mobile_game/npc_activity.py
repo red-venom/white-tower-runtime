@@ -117,11 +117,11 @@ def activity(state, actor):
     plan=active_plan(state['world']['sandbox'],actor)
     if plan is None:return None
     step=plan['steps'][plan['cursor']]
-    return {'op':step['op'],'target':step['target'],'from':step['from'],'due_at':step['due_at'],'stopping':plan['stop_after_current']}
+    return {'op':step['op'],'target':step['target'],'from':step['from'],'due_at':step['due_at'],'due_time':clock_label(step['due_at']),'stopping':plan['stop_after_current']}
 
 
 def events(state):
-    return sorted([{'plan_id':id,'actor':p['actor'],**deepcopy(r)} for id,p in state['world']['sandbox'].get('npc_plans',{}).items() for r in p['results']],key=lambda r:(r['at'],r['plan_id'],r['step']))
+    return sorted([{'plan_id':id,'actor':p['actor'],**deepcopy(r),'time':clock_label(r['at'])} for id,p in state['world']['sandbox'].get('npc_plans',{}).items() for r in p['results']],key=lambda r:(r['at'],r['plan_id'],r['step']))
 
 
 def new_events(before, after):
@@ -142,3 +142,20 @@ def narration(before, after):
     text=' '.join(r['text'] for r in results[:8])
     if len(results)>8:text+=' Further NPC results are recorded in the world activity journal.'
     return (' '+text) if text else ''
+
+
+def clock_label(seconds):
+    day,within=divmod(seconds,86400)
+    hour,within=divmod(within,3600)
+    minute,second=divmod(within,60)
+    return f'Day {day+1} · {hour:02d}:{minute:02d}:{second:02d}'
+
+
+def finish_times(state):
+    """Predict only deterministic public errands; no dice or real mutation."""
+    plans=state['world']['sandbox'].get('npc_plans',{})
+    pending=[id for id,p in plans.items() if p['status']=='pending']
+    if not pending:return {}
+    probe=deepcopy(state)
+    settle(probe,max(plans[id]['steps'][-1]['due_at'] for id in pending))
+    return {id:probe['world']['sandbox']['npc_plans'][id]['results'][-1]['at'] for id in pending}

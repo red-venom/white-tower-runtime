@@ -183,7 +183,9 @@ Scheduling costs no fictional time. The actions settle at their recorded due
 seconds during later player actions, inside that action's existing PostgreSQL
 transaction. A ten-minute wait containing a 140-second delivery still costs ten
 minutes, not twelve minutes twenty seconds. Reads and real-world time never
-advance the game. Preview reports the background events each action would settle;
+advance the game. `{"op":"wait_for_npc","target":"paper_delivery"}` waits only
+until the selected deterministic errand completes, cancels or blocks; it gives
+no recovery credit and does not require a message for every intermediate step. Preview reports the background events each action would settle;
 uncertain checks preview them separately for each declared outcome without dice.
 
 Object custody uses a unique `person:<id>` location. A carried object follows its
@@ -204,9 +206,12 @@ PC, spend player resources, grant permissions, cast, fight, conceal information,
 force a conversation or create an interaction requiring a new player decision.
 Those situations need distinct mechanics with interruptible time. The storyteller
 must not encode them as ordinary errands. `sandbox.known_people` reports public
-locations/activity, `sandbox.npc_plans` contains active and ten recent plans, and
+locations/activity, `sandbox.object_custody` gives public object holders even
+outside the current room, `sandbox.npc_plans` contains active and ten recent plans, and
 `sandbox.npc_events` contains twelve recent step results. Full results remain in
-the saved plans and complete action export. The mobile world panel shows recent
+the saved plans and complete action export. Use `sandbox.fictional_time.label`
+and the event `time`/activity `due_time` strings directly; avoid having the
+storyteller convert seconds into clock labels. The mobile world panel shows recent
 NPC results and local custody/activity. Current capacity is 400 plans per
 sandbox; no existing live campaign or old checkpoint is migrated.
 

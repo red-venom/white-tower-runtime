@@ -76,6 +76,9 @@ def choices(s):
   out.append(_choice(cmd,label,description,f'{seconds} seconds. {cost}'))
  for target,seconds in locations[loc]['exits'].items():
   add({'op':'travel','target':target},'Go to '+locations[target]['name'],'Follow an established route. The sandbox keeps your belongings and character.',seconds,True)
+ for id,finish in npc_activity.finish_times(s).items():
+  plan=box['npc_plans'][id];name=box['people'][plan['actor']]['name']
+  add({'op':'wait_for_npc','target':id},'Wait for '+name+'’s errand','Let this public background errand finish or stop at its first failed step. No recovery is inferred.',finish-clock['fictional_seconds'])
  add({'op':'wait'},'Let ten minutes pass','Advance the clock without inventing an event or recovery.',600)
  if s['resources']['strain'] or s['resources']['vitality']<s['resources']['max_vitality']:
   if clock['last_break_end'] is None or clock['fictional_seconds']+600-clock['last_break_end']>=3600:
@@ -120,7 +123,9 @@ def resolve(s,choice_id,dice=None):
  if op=='travel':
   locations=places(out);seconds=locations[box['location_id']]['exits'][c['target']];box['location_id']=c['target'];out['world']['location']=locations[c['target']]['name']
   text='Arrived at '+out['world']['location']+'.'
- elif op=='wait':seconds=600;text='Ten minutes passed. No story event or recovery was inferred.'
+ elif op=='wait_for_npc':
+  seconds=npc_activity.finish_times(s)[c['target']]-s['clock']['fictional_seconds'];text='Waited until the declared NPC errand finished or stopped. No recovery was inferred.'
+ elif op=='wait':seconds=600;text='Ten minutes passed. No recovery was applied.'
  elif op=='rest':
   seconds=600;out['resources']['strain']=max(0,out['resources']['strain']-2);out['resources']['vitality']=min(out['resources']['max_vitality'],out['resources']['vitality']+2)
   out['clock']['last_break_end']=out['clock']['fictional_seconds']+600;text='Recovery break completed. Wounds are unchanged.'
@@ -136,17 +141,20 @@ def resolve(s,choice_id,dice=None):
   elif op=='take':obj['location']='inventory';out['resources']['inventory'].append(obj['name']);text='Picked up '+obj['name']+'.'
   elif op=='drop':obj['location']=box['location_id'];obj['elevated']=False;out['resources']['inventory'].remove(obj['name']);text='Put down '+obj['name']+' here.'
   else:obj['lit']=False;text='The practice candle is extinguished.'
- _advance(out,seconds,op not in ('wait','rest','release'));validate(out)
+ _advance(out,seconds,op not in ('wait','wait_for_npc','rest','release'));validate(out)
  return {'state':out,'narration':text+npc_activity.narration(s,out),'roll':None,'elapsed_seconds':seconds}
 
 
 def context(s):
  validate(s);box=s['world']['sandbox'];loc=box['location_id'];locations=places(s)
  fields=('name','location','portable','weight_kg','elevated','lit','dry_fuel')
- return {'schema':'white-tower-sandbox-context-v1','location_id':loc,'location':locations[loc]['name'],
+ return {'schema':'white-tower-sandbox-context-v1','fictional_time':{'seconds':s['clock']['fictional_seconds'],'label':npc_activity.clock_label(s['clock']['fictional_seconds'])},'location_id':loc,'location':locations[loc]['name'],
   'description':locations[loc]['description'],'supervised_practice_available':supervised(s),
   'exits':[{'target':k,'name':locations[k]['name'],'seconds':v} for k,v in locations[loc]['exits'].items()],
   'objects':[{'id':id,**{k:deepcopy(o[k]) for k in fields},'provenance':o.get('provenance','disposable_fixture')} for id,o in box['objects'].items() if o['location'] in (loc,'inventory')],
+  'object_custody':[{'id':id,'name':o['name'],'holder':o['location'],
+    'place_id':loc if o['location']=='inventory' else box['people'][o['location'][7:]]['location'] if o['location'].startswith('person:') else o['location'],
+    'carried_by':'player' if o['location']=='inventory' else box['people'][o['location'][7:]]['name'] if o['location'].startswith('person:') else None} for id,o in box['objects'].items()],
   'known_places':[{'id':k,'name':p['name'],'description':p['description'],'exits':deepcopy(p['exits']),'provenance':p.get('provenance','disposable_fixture')} for k,p in locations.items()],
   'people':[{'id':k,**{f:p[f] for f in ('name','location','description','provenance')},'activity':npc_activity.activity(s,k),'carrying':[{'id':oid,'name':o['name']} for oid,o in box['objects'].items() if o['location']==npc_activity.holder(k)]} for k,p in box.get('people',{}).items() if p['location']==loc],
   'known_people':[{'id':k,'name':p['name'],'location':p['location'],'activity':npc_activity.activity(s,k)} for k,p in box.get('people',{}).items()],

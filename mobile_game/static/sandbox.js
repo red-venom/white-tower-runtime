@@ -13,10 +13,10 @@
   const label=id=>[...(world.known_places||[]),...world.objects,...(world.people||[]).flatMap(p=>p.carrying||[]),...(world.known_people||[])].find(r=>r.id===id)?.name||'the planned destination';
   (world.people||[]).forEach(p=>{
    line(records,`${p.name} · ${p.description}`);
-   if(p.activity)line(records,`${p.name} · ${p.activity.op==='move'?'travelling to':'busy with'} ${label(p.activity.target)} · due ${clock(p.activity.due_at)}`);
+   if(p.activity)line(records,`${p.name} · ${p.activity.op==='move'?'travelling to':'busy with'} ${label(p.activity.target)} · due ${p.activity.due_time||clock(p.activity.due_at)}`);
    if(p.carrying?.length)line(records,'Carrying: '+p.carrying.map(o=>o.name).join(', '));
   });
-  (world.npc_events||[]).slice(-4).forEach(e=>line(records,`${clock(e.at)} · ${e.status==='blocked'?'Errand stopped: ':''}${e.text}`));
+  (world.npc_events||[]).slice(-4).forEach(e=>line(records,`${e.time||clock(e.at)} · ${e.status==='blocked'?'Errand stopped: ':''}${e.text}`));
   (world.established_facts||[]).forEach(f=>line(records,f.text));
   (world.challenge_results||[]).forEach(r=>line(records,`${r.goal} · ${r.outcome}: ${r.summary}`));
   if(!records.childElementCount)line(records,'No people or additional facts have been established here.');

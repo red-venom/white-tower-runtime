@@ -28,7 +28,7 @@ def test_clock_custody_partial_arrival_and_completion_preserve_character():
  assert state==before and out['elapsed_seconds']==0
  state=out['state'];box=state['world']['sandbox']
  assert box['npc_plans']['delivery']['steps'][-1]['due_at']==32540
- assert npc_activity.activity(state,'courier')=={'op':'take','target':'parcel','from':'gallery','due_at':32410,'stopping':False}
+ assert npc_activity.activity(state,'courier')=={'op':'take','target':'parcel','from':'gallery','due_at':32410,'due_time':'Day 1 · 09:00:10','stopping':False}
  state=advance(state,9);assert state['world']['sandbox']['objects']['parcel']['location']=='gallery'
  state=advance(state,1);assert state['world']['sandbox']['objects']['parcel']['location']=='person:courier'
  assert 'take:parcel' not in {c['id'] for c in sandbox.choices(state)}
@@ -160,7 +160,7 @@ def test_postgres_schedule_and_completion_rollback_retry_race_export_recovery(ap
  with pytest.raises(Problem):store.act(player,other['id'],{**request,'expected_revision':0})
 
 
-def test_cancel_command_round_trips_through_atomic_http_action_path(app):
+def test_cancel_command_round_trips_through_atomic_tool_transaction(app):
  store=app.extensions['store'];client=app.test_client();start(client)
  with store.connect() as db:player=db.execute('SELECT id FROM mobile_players').fetchone()['id']
  packet=call(store,player,'sandbox_create',{'request_id':str(uuid.uuid4())});cid=packet['id']
@@ -174,3 +174,36 @@ def test_cancel_command_round_trips_through_atomic_http_action_path(app):
  exported=store.export(player,cid);validate_export(exported,packet)
  assert exported['state']['world']['sandbox']['objects']['parcel']['location']=='person:courier'
  assert exported['state']['world']['sandbox']['people']['courier']['location']=='library'
+
+
+def test_wait_for_errand_stops_at_completion_cancellation_or_failed_step():
+ state=scheduled();before=deepcopy(state)
+ assert npc_activity.finish_times(state)=={'delivery':32540} and state==before
+ result=sandbox.resolve(state,'wait_for_npc:delivery')
+ assert result['elapsed_seconds']==140 and result['state']['clock']['fictional_seconds']==32540
+ assert result['state']['clock']['day_activity_seconds']==state['clock']['day_activity_seconds']
+ assert result['state']['resources']==state['resources']
+ assert 'wait_for_npc:delivery' not in {c['id'] for c in sandbox.choices(result['state'])}
+ stopped=npc_activity.resolve(state,{'op':'cancel_npc_plan','target':'delivery'})['state']
+ assert sandbox.resolve(stopped,'wait_for_npc:delivery')['elapsed_seconds']==10
+ # A reachable future pickup can become invalid before its step starts.
+ plan={**PLAN,'steps':[{'op':'move','target':'library'},{'op':'take','target':'parcel'},{'op':'drop','target':'parcel'}]}
+ state=initial();state['world']['sandbox']['objects']['parcel']['location']='library'
+ state=npc_activity.resolve(state,plan)['state']
+ state['world']['sandbox']['objects']['parcel']['location']='inventory'
+ state['resources']['inventory'].append('Paper parcel')
+ result=sandbox.resolve(state,'wait_for_npc:delivery')
+ assert result['elapsed_seconds']==130 # stops on failed pickup; does not charge the later drop
+ assert result['state']['world']['sandbox']['npc_plans']['delivery']['status']=='blocked'
+ assert result['state']['resources']['inventory'].count('Paper parcel')==1
+
+
+def test_clock_labels_and_remote_custody_are_authoritative_public_projection():
+ state=scheduled();state=sandbox.resolve(state,'wait_for_npc:delivery')['state']
+ context=sandbox.context(state)
+ assert context['fictional_time']=={'seconds':32540,'label':'Day 1 · 09:02:20'}
+ assert context['npc_events'][1]['time']=='Day 1 · 09:02:10'
+ assert next(o for o in context['object_custody'] if o['id']=='parcel')=={'id':'parcel','name':'Paper parcel','holder':'library','place_id':'library','carried_by':None}
+ assert not any(o['id']=='parcel' for o in context['objects'])
+ for value,label in ((32580,'Day 1 · 09:03:00'),(86399,'Day 1 · 23:59:59'),(86400,'Day 2 · 00:00:00')):
+  assert npc_activity.clock_label(value)==label
