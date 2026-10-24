@@ -24,7 +24,7 @@ def app(monkeypatch):
     monkeypatch.delenv("WOT_GM_ENABLED", raising=False)
     application = create_app(url, testing=True)
     with candidate.connect() as db:
-        db.execute("TRUNCATE mobile_gm_requests, mobile_gm_budget, mobile_actions, mobile_campaigns, mobile_sessions, mobile_players, mobile_rate_limits")
+        db.execute("TRUNCATE mobile_oauth_tokens, mobile_oauth_codes, mobile_oauth_grants, mobile_oauth_clients, mobile_gm_requests, mobile_gm_budget, mobile_actions, mobile_campaigns, mobile_sessions, mobile_players, mobile_rate_limits")
     return application
 
 
@@ -546,7 +546,7 @@ def test_sandbox_tools_preview_commit_replay_ownership_and_resume(app):
         assert response.status_code==code,response.get_json()
         return response.get_json()
     specs=client.get('/api/sandbox/tools').get_json()
-    assert not specs['chatgpt_connection_ready'] and len(specs['tools'])==4
+    assert not specs['chatgpt_connection_ready'] and len(specs['tools'])==5
     packet=call('sandbox_create',{'request_id':str(uuid.uuid4())});id=packet['id'];base=f'/api/campaigns/{id}'
     original=json.loads(json.dumps(packet))
     args={'campaign_id':id,'expected_revision':0,'action_id':str(uuid.uuid4()),'command':{'op':'cast','weave':'W02','target':'wooden_token'}}

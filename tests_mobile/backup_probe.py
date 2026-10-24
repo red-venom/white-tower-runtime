@@ -15,6 +15,7 @@ Example from the repository parent:
     --backup-file .runtime/mobile-pilot-backup.dump
 """
 import argparse
+import secrets
 from datetime import date, datetime
 from decimal import Decimal
 import hashlib
@@ -40,7 +41,7 @@ from mobile_game.store import Store, Problem, digest
 SOURCE_DB = "mobile_pilot_backup_source"
 RESTORE_DB = "mobile_pilot_backup_restore"
 TABLES = ("mobile_players", "mobile_sessions", "mobile_campaigns", "mobile_actions", "mobile_rate_limits",
-          "mobile_gm_budget", "mobile_gm_requests")
+          "mobile_gm_budget", "mobile_gm_requests", "mobile_oauth_clients", "mobile_oauth_grants", "mobile_oauth_codes", "mobile_oauth_tokens")
 
 
 class ProbeFailure(Exception):
@@ -226,6 +227,29 @@ def run(args, report):
     sandbox_packet = source.create(owner, str(uuid.uuid4()), "tower-sandbox-v1")
     for choice in ("cast:W02:wooden_token", "travel:garden", "drop:wooden_token"):
         sandbox_packet = source.act(owner, sandbox_packet["id"], request_for(sandbox_packet, choice))
+    # Exercise real OAuth code/PKCE exchange before backing up all credential hashes.
+    from unittest.mock import patch
+    from urllib.parse import urlsplit, parse_qs
+    from authlib.oauth2.rfc7636 import create_s256_code_challenge
+    from mobile_game.app import create_app
+    from mobile_game.oauth import REDIRECT, SCOPES
+    origin = 'https://backup.example'
+    config = {'PUBLIC_ORIGIN':origin,'WOT_MCP_ENABLED':'1','WOT_GM_ENABLED':'0'}
+    with patch.dict(os.environ, config):
+        oauth_app = create_app(source.url, testing=True)
+    browser = oauth_app.test_client()
+    login = browser.post('/api/session/recover',json={'recovery_code':credentials['recovery_code']}).json
+    client_id = browser.post('/oauth/register',json={'redirect_uris':[REDIRECT]}).json['client_id']
+    verifier = secrets.token_urlsafe(48)
+    auth = {'client_id':client_id,'redirect_uri':REDIRECT,'response_type':'code','scope':SCOPES,
+      'resource':origin+'/mcp','code_challenge_method':'S256','code_challenge':create_s256_code_challenge(verifier),'state':'backup-fixture'}
+    consent = browser.post('/api/oauth/authorize',json={'authorization':auth,'allow':True},headers={'X-CSRF-Token':login['csrf_token']})
+    require(consent.status_code == 200, 'backup_oauth_consent')
+    code = parse_qs(urlsplit(consent.json['redirect']).query)['code'][0]
+    exchange = {'grant_type':'authorization_code','client_id':client_id,'code':code,'code_verifier':verifier,'redirect_uri':REDIRECT,'resource':origin+'/mcp'}
+    token_reply = browser.post('/oauth/token',data=exchange)
+    require(token_reply.status_code == 200, 'backup_oauth_exchange')
+    access = token_reply.json['access_token']
     source_snapshot = snapshot(source, SOURCE_DB)
     require(all(source_snapshot[table] for table in TABLES), "all_mobile_tables_populated")
     report["checks_passed"].append("full_disposable_fixture_with_private_seed_and_sessions")
@@ -263,6 +287,17 @@ def run(args, report):
     report["restored_tables_sha256"] = hashlib.sha256(encoded(restored_snapshot)).hexdigest()
     report["checks_passed"].append("every_mobile_table_restored_exactly_including_private_seed_and_sessions")
     report["checks_passed"].append("table_columns_constraints_indexes_and_triggers_match")
+    with patch.dict(os.environ, config):
+        restored_app = create_app(restored.url, testing=True)
+    remote = restored_app.test_client()
+    resumed = remote.post('/mcp',json={'jsonrpc':'2.0','id':1,'method':'tools/call',
+      'params':{'name':'sandbox_read','arguments':{'campaign_id':sandbox_packet['id']}}},
+      headers={'Authorization':'Bearer '+access,'Accept':'application/json,text/event-stream'})
+    require(resumed.status_code == 200 and not resumed.json['result']['isError'], 'restored_oauth_access')
+    require(resumed.json['result']['structuredContent']['revision'] == sandbox_packet['revision'], 'restored_mcp_checkpoint')
+    require(remote.post('/oauth/token',data=exchange).status_code == 400, 'used_oauth_code_stays_used_after_restore')
+    require(remote.post('/mcp',json={},headers={'Authorization':'Bearer '+access}).status_code == 401, 'restored_replay_revokes_grant')
+    report['checks_passed'].append('oauth_hashes_and_mcp_access_restored_with_code_replay_protection')
     def must_not_call(*args):
         raise ProbeFailure("restored_request_must_not_recall_provider")
     for original, expected in ((gm_completed_request, gm_completed), (gm_unknown_request, gm_unknown)):

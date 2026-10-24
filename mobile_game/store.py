@@ -116,6 +116,8 @@ class Store:
             # Serialize first deployment when several workers boot together.
             db.execute("SELECT pg_advisory_xact_lock(873024104)")
             db.execute(SCHEMA)
+            from .oauth import SCHEMA as OAUTH_SCHEMA
+            db.execute(OAUTH_SCHEMA)
 
     def health(self):
         with self.connect() as db:

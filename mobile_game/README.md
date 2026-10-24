@@ -24,8 +24,9 @@ Existing authored samples and their saves remain available as regression fixture
 
 `mobile_game.sandbox_tools` is a transport-independent, MCP-shaped dispatcher.
 It receives the authenticated player identity from the transport; the model may
-never provide or override that identity. Its four tools are:
+never provide or override that identity. Its five tools are:
 
+- `sandbox_list()`: find this owner's sandboxes when resuming in a fresh chat.
 - `sandbox_create(request_id)`: create a disposable sandbox; the same ID retries safely.
 - `sandbox_read(campaign_id)`: explicit player-visible world projection and available actions.
 - `sandbox_preview(campaign_id, action_id, expected_revision, command)`: validate one
@@ -42,17 +43,39 @@ success. The storyteller owns prose; only an engine receipt establishes an actio
 
 The deployed web adapter exposes `GET /api/sandbox/tools` and
 `POST /api/sandbox/tools/<tool_name>` using the existing owner session and CSRF
-protection. These are **not yet a ChatGPT-connectable MCP endpoint**. The published
+protection. These web routes are separate from the MCP endpoint. The published
 schemas mark reads/previews read-only and commits as idempotent writes.
 
-ChatGPT connection work still requires a standard Streamable HTTP MCP adapter and
-OAuth authorization tied to the same player identity. Cookie sessions or pasted
-recovery codes are not substitutes for that flow. No public unauthenticated
-campaign endpoint or shared master token is provided. See the official
+The new `/mcp` endpoint implements stateless Streamable HTTP with JSON responses,
+initialization, notifications, discovery and tool calls. It requires OAuth bearer
+tokens on every request; browser cookies cannot authenticate it. Set
+`WOT_MCP_ENABLED=1` with a canonical HTTPS `PUBLIC_ORIGIN` to enable it. With the
+flag absent it fails closed. No model credentials are used.
+
+Authlib handles the authorization-code/PKCE and refresh grants. The existing
+website login identifies the owner on `/oauth/authorize`; the owner explicitly
+consents through a CSRF-protected endpoint. Dynamic registration accepts only the
+exact ChatGPT callback `https://chatgpt.com/connector_platform_oauth_redirect`.
+Discovery advertises S256, public clients (`none`) and RFC 9207 issuer identification.
+Tokens are restricted to this service's exact `/mcp` resource. Access lasts one
+hour; rotating refresh tokens expire with the original grant after 30 days.
+Reused codes or refresh tokens revoke their grant family. PostgreSQL row locks
+serialize exchanges across workers. Only hashes of codes/tokens are stored.
+`/connect` allows the owner to disconnect all ChatGPT grants without deleting saves.
+
+The server supports `sandbox:read` and `sandbox:write`; writes require both.
+These grants cover disposable sandbox tools only. They cannot import live saves,
+access other owners, edit login credentials, or enable provider spending.
+The authorization server is hosted here using Authlib rather than an external
+identity service, so operating and testing this flow remains our responsibility.
+No public unauthenticated campaign endpoint or shared master token is provided.
+See the official
 [OpenAI MCP authentication requirements](https://developers.openai.com/plugins/build/auth)
 and [MCP server guide](https://developers.openai.com/plugins/build/mcp-server).
-A live ChatGPT tool-call test remains outstanding; dispatcher tests do not establish
-that the ChatGPT connection is working.
+A live ChatGPT tool-call test remains outstanding; protocol/client tests do not
+establish that the ChatGPT connection is working. `chatgpt_connection_ready` stays
+false until that real integration is verified. Native phone availability must also
+be checked in the user's actual client.
 
 ## Connected chapters: highest-leverage development pass
 

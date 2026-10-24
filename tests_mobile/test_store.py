@@ -29,7 +29,7 @@ def store():
         pytest.fail("Refusing test cleanup outside the mobile_pilot_test database")
     candidate.initialize()
     with candidate.connect() as db:
-        db.execute("TRUNCATE mobile_gm_requests, mobile_gm_budget, mobile_actions, mobile_campaigns, mobile_sessions, mobile_players, mobile_rate_limits")
+        db.execute("TRUNCATE mobile_oauth_tokens, mobile_oauth_codes, mobile_oauth_grants, mobile_oauth_clients, mobile_gm_requests, mobile_gm_budget, mobile_actions, mobile_campaigns, mobile_sessions, mobile_players, mobile_rate_limits")
     yield candidate
 
 

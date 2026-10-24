@@ -1,7 +1,7 @@
 """Transport-independent MCP-shaped tools. Caller identity comes from auth, never arguments.
 
-This is a tool dispatcher, not a publicly authenticated MCP transport. The web
-adapter uses existing owner cookies/CSRF. A ChatGPT OAuth adapter is still needed.
+This dispatcher is shared by the cookie/CSRF web adapter and OAuth MCP transport.
+Identity always comes from the authenticated adapter, never model arguments.
 """
 from . import sandbox
 from .store import Problem, digest, identifier
@@ -17,6 +17,7 @@ def spec(name,description,properties,required,read=True):
  'annotations':{'readOnlyHint':read,'destructiveHint':False,'idempotentHint':True,'openWorldHint':False}}
 
 TOOLS=[
+ spec('sandbox_list','List your saved disposable sandboxes so a fresh chat can resume without knowing a campaign ID.',{},[]),
  spec('sandbox_create','Create an independent disposable sandbox with a fixed sample character. Retry with the same request_id.',{'request_id':UUID},['request_id'],False),
  spec('sandbox_read','Read authoritative player-visible state and currently available world operations. Do not infer unsupported abilities.',{'campaign_id':UUID},['campaign_id']),
  spec('sandbox_preview','Preview a supported action without changing the world. Show material costs and use the returned action request unchanged when the player chooses it.',{'campaign_id':UUID,'action_id':UUID,'expected_revision':REV,'command':COMMAND},['campaign_id','action_id','expected_revision','command']),
@@ -29,6 +30,10 @@ def call(store,player,name,args):
  if tool is None:raise Problem(422,'UNKNOWN_TOOL','Unknown sandbox tool.')
  if type(args) is not dict or set(args)!=set(tool['inputSchema']['required']):raise Problem(422,'INVALID_ARGUMENTS','Use the exact tool argument schema.')
  if name=='sandbox_create':return store.create(player,args['request_id'],sandbox.EPISODE_ID)
+ if name=='sandbox_list':
+  with store.connect() as db:
+   rows=db.execute("SELECT id,name,revision,updated_at FROM mobile_campaigns WHERE player_id=%s AND state->'world'->'episode'->>'id'=%s ORDER BY updated_at DESC LIMIT 20",(player,sandbox.EPISODE_ID)).fetchall()
+   return {'campaigns':[{**row,'id':str(row['id']),'updated_at':row['updated_at'].isoformat()} for row in rows]}
  campaign=args['campaign_id']
  if name=='sandbox_commit':
   # Gate this tool to sandboxes, without changing the existing atomic action path.
