@@ -16,7 +16,7 @@ supervisor availability; clients cannot supply a fabricated permission or target
 
 This is a **disposable rules subset**, not the full Wheel of Time engine.
 The map and supervisor schedule are test fixtures, not canonical geography.
-Combat, Healing, arbitrary checks, world-authoring tools, curriculum progression,
+Combat, Healing, arbitrary checks, NPC actions, curriculum progression,
 advanced channeling and live character import remain unimplemented here.
 Existing authored samples and their saves remain available as regression fixtures.
 
@@ -72,10 +72,55 @@ No public unauthenticated campaign endpoint or shared master token is provided.
 See the official
 [OpenAI MCP authentication requirements](https://developers.openai.com/plugins/build/auth)
 and [MCP server guide](https://developers.openai.com/plugins/build/mcp-server).
-A live ChatGPT tool-call test remains outstanding; protocol/client tests do not
-establish that the ChatGPT connection is working. `chatgpt_connection_ready` stays
-false until that real integration is verified. Native phone availability must also
-be checked in the user's actual client.
+The deployed connection was verified in ChatGPT web on 24 October 2026: sample
+creation/readback, a previewed action, identical-request retry without duplicate
+costs, independent browser/export validation, and recovery in a separate chat
+without supplying its campaign ID or state. Native iPhone availability remains
+unverified. `chatgpt_connection_ready` reports whether this server's OAuth MCP
+transport is enabled; it does not prove the current browser owner has connected
+ChatGPT or that a particular client exposes the tools.
+
+## Persistent world preparation
+
+The existing preview/commit tools now accept an `establish` command with 1–12
+public records. This permits a storyteller to build a traversable world rather
+than repeatedly replaying the four-room fixture. For example:
+
+```json
+{"op":"establish","changes":[
+  {"kind":"place","id":"workroom","name":"Small workroom","description":"A quiet room used for sorting ordinary supplies."},
+  {"kind":"route","from":"library","to":"workroom","seconds":90},
+  {"kind":"object","id":"ribbon","name":"Blue ribbon","location":"workroom","weight_kg":0.01},
+  {"kind":"person","id":"sera","name":"Sera","location":"workroom","description":"An adult clerk sorting blank paper."},
+  {"kind":"fact","id":"paper_delivery","text":"Blank paper for the workroom arrived this morning."}
+]}
+```
+
+Places, reciprocal routes, ordinary portable props, people and established facts
+persist in the same revisioned checkpoint and immutable event chain. Preparation
+costs no fictional time and changes no character field. Existing records and
+routes cannot be overwritten; identities/names cannot replace the PC or duplicate
+an existing object. Props must start in a known place and be acquired through
+normal actions. Carrying them, leaving them elsewhere and returning use the same
+world operations. Preparation and player actions share revision locking, retry
+identity, rollback, export and recovery. The returned preparation commit request
+includes its canonical command; do not omit or modify it.
+
+All authored records are explicitly `campaign_invention`, never source-verified
+canon. Use only public, established material within the agreed premise; no secrets,
+PC speech/decisions, retcons, claims that unperformed checks succeeded, abilities,
+rewards or item effects. Text never grants mechanics: calling an NPC a supervisor
+does not enable casting, and describing a magical object grants no power. These
+are safe ordinary places/routes and props; hazards, access locks, economic items,
+NPC movement/actions and encounters need their own future mechanical operations.
+The server enforces structure, append-only identities and mechanical isolation;
+it cannot establish the truth or lore accuracy of natural-language facts.
+
+Old saves keep their original fixture graph until a preparation is committed.
+Existing saves and Aveline are not migrated by this feature. Current bounds are
+100 places, 200 objects, 100 people and 300 public facts per disposable sandbox;
+the HTTP body limit remains 16 KiB. Broader campaign mechanics and native phone
+verification remain required before live-character migration.
 
 ## Connected chapters: highest-leverage development pass
 

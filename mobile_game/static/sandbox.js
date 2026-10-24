@@ -8,6 +8,13 @@
   const objects=$('sandbox-objects');objects.replaceChildren();
   world.objects.forEach(o=>line(objects,`${o.name} · ${o.location==='inventory'?'carried':o.elevated?'on the high shelf':'here'}${o.lit?' · lit':''}`));
   line(objects,'Your belongings: '+world.character.inventory.join(', '));
+  const records=$('sandbox-records');records.replaceChildren();
+  (world.people||[]).forEach(p=>line(records,`${p.name} · ${p.description}`));
+  (world.established_facts||[]).forEach(f=>line(records,f.text));
+  if(!records.childElementCount)line(records,'No people or additional facts have been established here.');
+  line(records,'These are public campaign records. Descriptions do not grant abilities or resolve actions.');
+  const places=$('sandbox-places');places.replaceChildren();
+  (world.known_places||[]).forEach(p=>line(places,`${p.name}${p.id===world.location_id?' · you are here':''} · ${p.provenance==='campaign_invention'?'campaign invention':'sample setting'}`));
   const sheet=$('sandbox-character');sheet.replaceChildren();
   line(sheet,`${world.character.name} · ${world.character.rank} · Capacity ${world.character.capacity} · Control ${world.character.control}`);
   line(sheet,Object.entries(world.character.attributes).map(([k,v])=>`${k} ${v}`).join(' · '));

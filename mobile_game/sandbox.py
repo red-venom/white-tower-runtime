@@ -24,18 +24,22 @@ def initial_state():
  return s
 
 
+def places(s):
+ return s['world']['sandbox'].get('places',PLACES)
+
+
 def validate(s):
  if s.get('disposable') is not True or s.get('rules_edition')!='notion-manual-v2' or s['world']['episode']['id']!=EPISODE_ID:
   raise ValueError('Only the disposable sandbox is supported.')
- box=s['world']['sandbox'];clock=s['clock']
- if box['location_id'] not in PLACES:raise ValueError('Unknown location.')
+ box=s['world']['sandbox'];clock=s['clock'];locations=places(s)
+ if box['location_id'] not in locations:raise ValueError('Unknown location.')
  if any(type(clock[k]) is not int or not 0<=clock[k]<=2**53-1 for k in ('fictional_seconds','day_activity_seconds')) or clock['day_activity_seconds']>28800:
   raise ValueError('Invalid clock.')
  c=s['channeling'];r=s['resources']
  for value,low,high in ((c['current_capacity'],1,10),(c['control'],1,4),(r['strain'],0,2*c['current_capacity']),(r['vitality'],0,r['max_vitality']),(r['wounds'],0,3)):
   if type(value) is not int or not low<=value<=high:raise ValueError('Invalid character boundary.')
  for obj in box['objects'].values():
-  if obj['location'] not in (*PLACES,'inventory'):raise ValueError('Invalid object location.')
+  if obj['location'] not in (*locations,'inventory'):raise ValueError('Invalid object location.')
 
 
 def supervised(s,seconds=0):
@@ -58,7 +62,7 @@ def _choice(command,label,description,stakes):
 
 
 def choices(s):
- validate(s);box=s['world']['sandbox'];loc=box['location_id'];out=[];clock=s['clock'];caster=s['channeling']
+ validate(s);box=s['world']['sandbox'];loc=box['location_id'];locations=places(s);out=[];clock=s['clock'];caster=s['channeling']
  if caster['embraced'] or caster['held_weaves'] or caster['pending_cast']:
   return [_choice({'op':'release'},'Release the Source','End active channeling before other sandbox activity.','No time or refund of previously spent Strain.')]
  def add(cmd,label,description,seconds,active=False,cost='No roll or resource cost.'):
@@ -66,8 +70,8 @@ def choices(s):
   try:_advance(probe,seconds,active)
   except ValueError:return
   out.append(_choice(cmd,label,description,f'{seconds} seconds. {cost}'))
- for target,seconds in PLACES[loc]['exits'].items():
-  add({'op':'travel','target':target},'Go to '+PLACES[target]['name'],'Follow an established route. The sandbox keeps your belongings and character.',seconds,True)
+ for target,seconds in locations[loc]['exits'].items():
+  add({'op':'travel','target':target},'Go to '+locations[target]['name'],'Follow an established route. The sandbox keeps your belongings and character.',seconds,True)
  add({'op':'wait'},'Let ten minutes pass','Advance the clock without inventing an event or recovery.',600)
  if s['resources']['strain'] or s['resources']['vitality']<s['resources']['max_vitality']:
   if clock['last_break_end'] is None or clock['fictional_seconds']+600-clock['last_break_end']>=3600:
@@ -77,7 +81,7 @@ def choices(s):
    add({'op':'drop','target':id},'Put down '+obj['name'],'Place the carried object here.',10,True);continue
   if obj['location']!=loc:continue
   if obj['portable'] and not obj['elevated']:
-   add({'op':'take','target':id},'Pick up '+obj['name'],'Take the reachable practice object.',10,True)
+   add({'op':'take','target':id},'Pick up '+obj['name'],'Take the reachable object.',10,True)
   if obj['lit']:
    add({'op':'extinguish','target':id},'Snuff the candle','Use the snuffer on the practice table.',10,True)
   for weave in WEAVES:
@@ -94,6 +98,9 @@ def choices(s):
 
 def command_choice(s,command):
  if type(command) is not dict:raise ValueError('Supply a structured command.')
+ if command.get('op')=='establish':
+  from .worldbuilding import choice
+  return choice(s,command)
  for c in choices(s):
   if c['command']==command:return c
  raise ValueError('Unsupported or unavailable command. Read the current world and available actions; do not substitute a different action.')
@@ -105,7 +112,7 @@ def resolve(s,choice_id,dice=None):
  if choice_id not in available:raise ValueError('Action is unavailable in this world state.')
  c=available[choice_id]['command'];op=c['op'];out=deepcopy(s);box=out['world']['sandbox'];seconds=10;receipt=None
  if op=='travel':
-  seconds=PLACES[box['location_id']]['exits'][c['target']];box['location_id']=c['target'];out['world']['location']=PLACES[c['target']]['name']
+  locations=places(out);seconds=locations[box['location_id']]['exits'][c['target']];box['location_id']=c['target'];out['world']['location']=locations[c['target']]['name']
   text='Arrived at '+out['world']['location']+'.'
  elif op=='wait':seconds=600;text='Ten minutes passed. No story event or recovery was inferred.'
  elif op=='rest':
@@ -128,18 +135,23 @@ def resolve(s,choice_id,dice=None):
 
 
 def context(s):
- validate(s);box=s['world']['sandbox'];loc=box['location_id']
+ validate(s);box=s['world']['sandbox'];loc=box['location_id'];locations=places(s)
  fields=('name','location','portable','weight_kg','elevated','lit','dry_fuel')
- return {'schema':'white-tower-sandbox-context-v1','location_id':loc,'location':PLACES[loc]['name'],
-  'description':PLACES[loc]['description'],'supervised_practice_available':supervised(s),
-  'exits':[{'target':k,'name':PLACES[k]['name'],'seconds':v} for k,v in PLACES[loc]['exits'].items()],
-  'objects':[{'id':id,**{k:deepcopy(o[k]) for k in fields}} for id,o in box['objects'].items() if o['location'] in (loc,'inventory')],
+ return {'schema':'white-tower-sandbox-context-v1','location_id':loc,'location':locations[loc]['name'],
+  'description':locations[loc]['description'],'supervised_practice_available':supervised(s),
+  'exits':[{'target':k,'name':locations[k]['name'],'seconds':v} for k,v in locations[loc]['exits'].items()],
+  'objects':[{'id':id,**{k:deepcopy(o[k]) for k in fields},'provenance':o.get('provenance','disposable_fixture')} for id,o in box['objects'].items() if o['location'] in (loc,'inventory')],
+  'known_places':[{'id':k,'name':p['name'],'description':p['description'],'exits':deepcopy(p['exits']),'provenance':p.get('provenance','disposable_fixture')} for k,p in locations.items()],
+  'people':[{'id':k,**{f:p[f] for f in ('name','location','description','provenance')}} for k,p in box.get('people',{}).items() if p['location']==loc],
+  'established_facts':[{'id':k,'text':f['text'],'provenance':f['provenance']} for k,f in box.get('facts',{}).items()],
+  'world_record_ids':{'objects':list(box['objects']),'people':list(box.get('people',{})),'facts':list(box.get('facts',{}))},
   'character':{'name':s['identity']['name'],'rank':s['rank'],'attributes':{k:s['attributes'][k] for k in ('body','grace','wits','will','presence')},'skills':{k:s['skills'][k] for k in ('athletics','melee','marksmanship','stealth','survival','notice','scholarship','medicine','persuasion','insight','leadership','composure')},
     'known_weaves':list(s['channeling']['known_weaves']),'capacity':s['channeling']['current_capacity'],'control':s['channeling']['control'],'flows':{k:s['channeling']['flows'][k] for k in ('air','earth','fire','water','spirit')},
     'inventory':list(s['resources']['inventory'])},
   'last_cast':deepcopy(box['last_cast']),
   'limits':['Disposable fixture; room layout and daily supervisor schedule are sandbox fixtures, not canonical Tower geography.',
-   'No combat, Healing, general social checks, world editing, curriculum progression or live-character import is implemented.',
+   'No combat, Healing, general social checks, NPC actions, curriculum progression or live-character import is implemented.',
+   'Public world preparation is additive and labelled campaign invention. Descriptions confer no abilities, supervision, rewards or completed player actions. Secret preparation and retcons are not supported.',
    'The storyteller supplies prose. Only committed engine actions change state. Unsupported actions must be reported, not invented.']}
 
 

@@ -148,7 +148,7 @@ def create_app(database_url=None, testing=False, *, gm_interpreter=None):
     @app.get("/api/sandbox/tools")
     def sandbox_tool_definitions():
         from .sandbox_tools import TOOLS
-        return jsonify(tools=TOOLS, transport="authenticated-web-adapter", chatgpt_connection_ready=False,
+        return jsonify(tools=TOOLS, transport="authenticated-web-adapter", chatgpt_connection_ready=app.extensions['oauth_enabled'],
                        mcp_endpoint=public_origin+'/mcp' if app.extensions['oauth_enabled'] else None,
                        oauth_enabled=app.extensions['oauth_enabled'])
 

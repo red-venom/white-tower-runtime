@@ -306,7 +306,8 @@ class Store:
         return result
 
     def act(self, player, campaign, request, fault=None):
-        if not isinstance(request, dict) or set(request) != {"action_id", "expected_revision", "choice_id", "choice_hash"}:
+        base = {"action_id", "expected_revision", "choice_id", "choice_hash"}
+        if not isinstance(request, dict) or set(request) not in (base, base | {"command"}):
             raise Problem(422, "INVALID_ACTION", "Choose one of the available actions.")
         action = identifier(request["action_id"])
         expected, choice = request["expected_revision"], request["choice_id"]
@@ -324,14 +325,23 @@ class Store:
                 return {**old["response"], "replayed": True}
             if row["revision"] != expected:
                 raise Problem(409, "STALE_REVISION", "Another action has already been saved. Refresh before choosing again.")
-            choices = {c["id"]: c for c in rules.view(row["state"])["choices"]}
+            preparation = "command" in request
+            if preparation:
+                from .worldbuilding import choice as world_choice, resolve as world_resolve
+                try:
+                    proposed = world_choice(row["state"], request["command"])
+                    choices = {proposed['id']: proposed}
+                except (ValueError, KeyError) as exc:
+                    raise Problem(422, "INVALID_WORLD_CHANGE", str(exc)) from None
+            else:
+                choices = {c["id"]: c for c in rules.view(row["state"])["choices"]}
             if choice not in choices:
                 raise Problem(422, "CHOICE_UNAVAILABLE", "That choice is no longer available. Refresh the scene.")
             if request["choice_hash"] != digest(choices[choice]):
                 raise Problem(409, "STAKES_CHANGED", "The displayed stakes have changed. Refresh and review them before deciding.")
             dice = self.dice(row["seed"], campaign, action) if choices[choice]["requires_roll"] else None
             try:
-                resolved = rules.resolve(row["state"], choice, dice)
+                resolved = world_resolve(row["state"], request["command"]) if preparation else rules.resolve(row["state"], choice, dice)
             except ValueError as exc:
                 raise Problem(422, "CHOICE_UNAVAILABLE", str(exc)) from None
             revision = expected + 1
