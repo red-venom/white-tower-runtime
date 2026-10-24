@@ -567,6 +567,10 @@
   // pass through the existing owner-bound pending request and action resolver.
   window.whiteTowerPlay = {
     context: () => ({ current, playerId, blocked: busy || !!pending || gmUnresolved() }),
+    notes: async (id, update) => {
+      if (!current || current.id !== id) throw new Error("Open the original story first.");
+      return api(`/api/campaigns/${encodeURIComponent(id)}/notes`, update ? {method:"POST",body:update} : {});
+    },
     journal: async (q, before) => {
       if (!current) throw new Error("Open a story first.");
       return api(`/api/campaigns/${encodeURIComponent(current.id)}/journal?q=${encodeURIComponent(q)}&before=${before || Number.MAX_SAFE_INTEGER}`);

@@ -220,6 +220,7 @@ def run(args, report):
     source.rate_limit("disposable-backup-fixture", 100, 60)
     # A second pre-existing session demonstrates all session rows survive.
     second_session = source.new_session(credentials["recovery_code"])
+    source.notes(owner, adventure_packet["id"], (0, "Disposable notebook: remember the completed lesson."))
     source_snapshot = snapshot(source, SOURCE_DB)
     require(all(source_snapshot[table] for table in TABLES), "all_mobile_tables_populated")
     report["checks_passed"].append("full_disposable_fixture_with_private_seed_and_sessions")
@@ -274,6 +275,8 @@ def run(args, report):
     require(restored.read(owner, adventure_packet["id"]) == {k:v for k,v in adventure_packet.items() if k != "replayed"},
             "adventure_character_relationships_learning_and_cast_receipt_restored")
     report["checks_passed"].append("adventure_character_relationships_learning_and_cast_receipt_restored")
+    require(restored.notes(owner, adventure_packet["id"]) == source.notes(owner, adventure_packet["id"]), "personal_notebook_restored")
+    report["checks_passed"].append("personal_notebook_restored")
     replay = restored.act(owner, packet["id"], original_request)
     require(replay == {**original_response, "replayed": True}, "exact_original_roll_response_restored")
     require(restored.read(owner, packet["id"]) == checkpoint, "retry_keeps_latest_checkpoint")

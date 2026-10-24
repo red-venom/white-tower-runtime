@@ -5,6 +5,15 @@ hosted web service and PostgreSQL. A player's desktop is not a runtime component
 It implements a small supported subset of `notion-manual-v2`; it is not a full
 freeform GM, a live-campaign importer, or the older `rules-v2` Python engine.
 
+## Personal notebook
+
+Each campaign has an owner-only notebook saved separately from game state.
+Notes never advance the turn or change dice, time, resources or NPC knowledge.
+Explicit saves persist online and appear in the player export. Drafts are kept
+on the current device, separately for each owner and campaign. Version checks
+reject conflicting edits from another device; the player reviews the saved copy
+before merging or replacing it. Retrying the same saved text is harmless.
+
 ## Playable authored adventure (v4)
 
 New stories default to **The Letter in the Gallery**, a separate original

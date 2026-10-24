@@ -161,6 +161,15 @@ def create_app(database_url=None, testing=False, *, gm_interpreter=None):
         value = body({"expected_revision", "prompt"})
         return jsonify(store.interpret_intent(g.identity["player_id"], campaign, value["expected_revision"], value["prompt"]))
 
+    @app.get("/api/campaigns/<campaign>/notes")
+    def read_notes(campaign):
+        return jsonify(store.notes(g.identity["player_id"], campaign))
+
+    @app.post("/api/campaigns/<campaign>/notes")
+    def save_notes(campaign):
+        value = body({"expected_version", "text"})
+        return jsonify(store.notes(g.identity["player_id"], campaign, (value["expected_version"], value["text"])))
+
     @app.get("/api/campaigns/<campaign>/journal")
     def journal(campaign):
         try:

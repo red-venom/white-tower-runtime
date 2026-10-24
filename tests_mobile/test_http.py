@@ -482,3 +482,35 @@ def test_valid_bootstrap_reload_bypasses_exhausted_anonymous_ip_limit(app):
         assert db.execute("SELECT count FROM mobile_rate_limits WHERE bucket=%s", (bucket,)).fetchone()["count"] == 121
         assert db.execute("SELECT count(*) AS n FROM mobile_sessions").fetchone()["n"] == 1
         assert db.execute("SELECT count(*) AS n FROM mobile_players").fetchone()["n"] == 1
+
+
+def test_personal_notes_cross_device_conflict_retry_export_and_no_game_mutation(app):
+    client=app.test_client();packet,headers,credentials=start(client)
+    base=f'/api/campaigns/{packet["id"]}';url=base+'/notes'
+    assert client.get(url).get_json()=={'text':'','version':0}
+    request={'expected_version':0,'text':'Remember to ask about the lesson. 🕯️'}
+    saved=client.post(url,json=request,headers=headers).get_json()
+    assert saved=={'text':request['text'],'version':1}
+    assert client.post(url,json=request,headers=headers).get_json()==saved
+    assert client.get(base).get_json()==packet
+    fresh=app.test_client();fresh.post('/api/session/recover',json={'recovery_code':credentials['recovery_code']})
+    assert fresh.get(url).get_json()==saved
+    assert client.post(url,json={'expected_version':0,'text':'Stale overwrite'},headers=headers).status_code==409
+    assert client.get(url).get_json()==saved
+    exported=client.get(base+'/export').get_json()
+    assert exported['player_notes']==saved
+    assert exported['sha256']==digest({k:v for k,v in exported.items() if k!='sha256'})
+    assert client.post(url,json={'expected_version':1,'text':''},headers=headers).get_json()=={'text':'','version':2}
+    assert client.get(base).get_json()==packet
+
+
+def test_personal_notes_owner_csrf_and_input_boundaries(app):
+    client=app.test_client();packet,headers,_=start(client);url=f'/api/campaigns/{packet["id"]}/notes'
+    foreign=app.test_client();_,other_headers,_=start(foreign)
+    assert foreign.get(url).status_code==404
+    assert foreign.post(url,json={'expected_version':0,'text':'intruder'},headers=other_headers).status_code==404
+    assert app.test_client().get(url).status_code==401
+    assert client.post(url,json={'expected_version':0,'text':'no csrf'}).status_code==403
+    for version,content in [(True,'x'),(-1,'x'),(0,'x'*10001),(0,'bad\x00text'),(0,['x'])]:
+        assert client.post(url,json={'expected_version':version,'text':content},headers=headers).status_code==422
+    assert client.post(url,json={'expected_version':0,'text':'x'*10000},headers=headers).status_code==200

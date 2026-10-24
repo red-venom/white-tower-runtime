@@ -21,7 +21,7 @@
   .intent-section { margin: 25px 0 22px; padding: 24px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); box-shadow: 0 8px 24px #182a1b08; }
   .intent-section h2 { margin: 0 0 16px; }
   .intent-section .eyebrow { margin-bottom: 6px; }
-  #intent-text { width: 100%; resize: vertical; min-height: 106px; border: 1px solid var(--line); border-radius: 5px; background: var(--paper); color: var(--ink); font: inherit; font-size: 16px; line-height: 1.6; padding: 14px; }
+  #intent-text, #notes-text { width: 100%; resize: vertical; min-height: 106px; border: 1px solid var(--line); border-radius: 5px; background: var(--paper); color: var(--ink); font: inherit; font-size: 16px; line-height: 1.6; padding: 14px; }
   .intent-footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 12px 0; }
   #draft-status { color: var(--muted); font-size: .66rem; max-width: 230px; }
   #intent-reply { border-left: 2px solid var(--gold); padding: 10px 14px; margin: 18px 0; font-family: var(--serif); line-height: 1.7; white-space: pre-line; }

@@ -62,6 +62,8 @@ CREATE TABLE IF NOT EXISTS mobile_campaigns (
     head text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(), UNIQUE(player_id, creation_request)
 );
+ALTER TABLE mobile_campaigns ADD COLUMN IF NOT EXISTS player_notes text NOT NULL DEFAULT '';
+ALTER TABLE mobile_campaigns ADD COLUMN IF NOT EXISTS notes_version bigint NOT NULL DEFAULT 0;
 CREATE TABLE IF NOT EXISTS mobile_actions (
     campaign_id uuid NOT NULL REFERENCES mobile_campaigns(id), action_id uuid NOT NULL,
     revision bigint NOT NULL CHECK (revision > 0), request_hash text NOT NULL,
@@ -244,6 +246,27 @@ class Store:
             return {**result, "expected_revision": expected_revision,
                     "choice": {**choice, "choice_hash": digest(choice)} if choice else None}
 
+    def notes(self, player, campaign, update=None):
+        if update is not None:
+            version, content = update
+            if type(version) is not int or not 0 <= version < 2**53-1 or type(content) is not str or len(content) > 10000 or "\x00" in content:
+                raise Problem(422, "INVALID_NOTES", "Use notes of at most 10,000 characters.")
+            try:
+                content.encode("utf-8")
+            except UnicodeError:
+                raise Problem(422, "INVALID_NOTES", "Use valid text for your notes.") from None
+        with self.connect() as db:
+            row = self._owned(db, player, campaign, lock=update is not None)
+            if update is not None:
+                # A lost response may safely retry the same save. A stale different
+                # edit never overwrites another device's work.
+                if content != row["player_notes"]:
+                    if version != row["notes_version"]:
+                        raise Problem(409, "NOTES_CONFLICT", "Your notes changed on another device. Review the saved copy before saving again.")
+                    row = db.execute("UPDATE mobile_campaigns SET player_notes=%s, notes_version=notes_version+1 WHERE id=%s RETURNING *",
+                                     (content, campaign)).fetchone()
+            return {"text": row["player_notes"], "version": row["notes_version"]}
+
     def journal(self, player, campaign, before, query):
         if type(before) is not int or not 1 <= before <= 2**53-1 or type(query) is not str or len(query) > 200 or "\x00" in query:
             raise Problem(422, "INVALID_JOURNAL_QUERY", "Use a short journal search.")
@@ -335,6 +358,7 @@ class Store:
                       "campaign_id": campaign, "rules_edition": "notion-manual-v2",
                       "revision": row["revision"], "head": row["head"], "state": row["state"],
                       "events": [t["event"] for t in turns],
+                      "player_notes": {"text": row["player_notes"], "version": row["notes_version"]},
                       "exported_at": datetime.now(timezone.utc).isoformat(),
                       "note": "Portable audit export; keep your recovery code to resume the cloud campaign. No live campaign import is enabled."}
             result["sha256"] = digest(result)

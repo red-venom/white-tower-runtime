@@ -71,7 +71,7 @@
         $("intent-reply").textContent=result.choice.requires_roll?"Review the stakes before taking this approach.":"Saving your chosen approach…";
         window.whiteTowerPlay.choose(result.choice);
       }else{$("draft-status").textContent=`Answered in ${((performance.now()-began)/1000).toFixed(1)}s · no game time passed.`;}
-    }finally{submitting=false;$("intent-submit").disabled=false;$("intent-submit").textContent="Continue →";}
+    }catch(error){$("intent-reply").hidden=false;$("intent-reply").textContent=error.message;$("draft-status").textContent="Your draft is kept. Try again when connected.";}finally{submitting=false;$("intent-submit").disabled=false;$("intent-submit").textContent="Continue →";}
   });
   window.addEventListener("white-tower:committed",event=>{
     const p=typedChoice,r=event.detail;
@@ -89,7 +89,7 @@
       data.entries.forEach(e=>{const article=document.createElement("article");article.className="journal-entry";article.append(text("p",`Turn ${e.revision}`,"journal-entry-label"));article.append(text("p",e.narration,"story-prose"));$("journal-results").append(article);});
       searchPage=data.next_before;$("journal-more").hidden=!searchPage;
       $("journal-search-status").textContent=data.entries.length?`${data.entries.length} saved entries loaded.`:"No matching entries. Try another word.";
-    }catch(error){$("journal-search-status").textContent=error.message;}
+    }catch(error){if(version===journalVersion&&packet.id===id)$("journal-search-status").textContent=error.message;}
   }
   $("journal-search").addEventListener("submit",e=>{e.preventDefault();search();});
   $("journal-more").addEventListener("click",()=>search(true));
